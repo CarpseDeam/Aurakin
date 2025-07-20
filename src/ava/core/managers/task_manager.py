@@ -1,11 +1,13 @@
 # src/ava/core/managers/task_manager.py
 import asyncio
-from typing import Optional, Dict
+from typing import Optional, Dict, TYPE_CHECKING
 from PySide6.QtWidgets import QMessageBox
 
 from src.ava.core.event_bus import EventBus
-from src.ava.core.managers.service_manager import ServiceManager
-from src.ava.core.managers.window_manager import WindowManager
+
+if TYPE_CHECKING:
+    from src.ava.core.managers.service_manager import ServiceManager
+    from src.ava.core.managers.window_manager import WindowManager
 
 
 class TaskManager:
@@ -21,12 +23,12 @@ class TaskManager:
         self.ai_task: Optional[asyncio.Task] = None
 
         # Manager references (set by Application)
-        self.service_manager: ServiceManager = None
-        self.window_manager: WindowManager = None
+        self.service_manager: "ServiceManager" = None
+        self.window_manager: "WindowManager" = None
 
         print("[TaskManager] Initialized")
 
-    def set_managers(self, service_manager: ServiceManager, window_manager: WindowManager):
+    def set_managers(self, service_manager: "ServiceManager", window_manager: "WindowManager"):
         """Set references to other managers."""
         self.service_manager = service_manager
         self.window_manager = window_manager

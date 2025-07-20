@@ -7,10 +7,10 @@ from .master_rules import JSON_OUTPUT_RULE
 HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent(f"""
     You are a master software architect. Your sole responsibility is to design a robust and logical Python application structure based on a user's request. You must think in terms of components, separation of concerns, and maintainability.
 
-    **USER REQUEST:** "{{prompt}}"
+    **USER REQUEST:** "{{{{prompt}}}}"
 
     **ADDITIONAL CONTEXT FROM KNOWLEDGE BASE:**
-    {{rag_context}}
+    {{{{rag_context}}}}
 
     **ARCHITECTURAL DIRECTIVES (UNBREAKABLE LAWS):**
 
@@ -62,12 +62,12 @@ HIERARCHICAL_PLANNER_PROMPT = textwrap.dedent(f"""
 MODIFICATION_PLANNER_PROMPT = textwrap.dedent(f"""
     You are an expert senior software developer specializing in modifying existing Python codebases. Your primary directive is to respect and extend the existing architecture.
 
-    **USER'S MODIFICATION REQUEST:** "{{prompt}}"
+    **USER'S MODIFICATION REQUEST:** "{{{{prompt}}}}"
 
     ---
     **CONTEXT ON EXISTING PROJECT (FULL SOURCE CODE):**
     ```json
-    {{full_code_context}}
+    {{{{full_code_context}}}}
     ```
     ---
 

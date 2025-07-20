@@ -2,19 +2,21 @@
 import asyncio
 import json
 from pathlib import Path
+from typing import Optional, Dict, TYPE_CHECKING
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox
-from typing import Optional, Dict
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.app_state import AppState
 from src.ava.core.interaction_mode import InteractionMode
-from src.ava.core.managers.service_manager import ServiceManager
-from src.ava.core.managers.window_manager import WindowManager
-from src.ava.core.managers.task_manager import TaskManager
 from src.ava.prompts import (
     CREATIVE_ASSISTANT_PROMPT, AURA_REFINEMENT_PROMPT
 )
+
+if TYPE_CHECKING:
+    from src.ava.core.managers.service_manager import ServiceManager
+    from src.ava.core.managers.window_manager import WindowManager
+    from src.ava.core.managers.task_manager import TaskManager
 
 
 class WorkflowManager:
@@ -25,14 +27,15 @@ class WorkflowManager:
 
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
-        self.service_manager: ServiceManager = None
-        self.window_manager: WindowManager = None
-        self.task_manager: TaskManager = None
+        self.service_manager: "ServiceManager" = None
+        self.window_manager: "WindowManager" = None
+        self.task_manager: "TaskManager" = None
         self._last_generated_code: Optional[Dict[str, str]] = None
-        self._is_plugin_override_active = False # Retained for potential future Python plugins
+        self._is_plugin_override_active = False  # Retained for potential future Python plugins
         print("[WorkflowManager] Initialized")
 
-    def set_managers(self, service_manager: ServiceManager, window_manager: WindowManager, task_manager: TaskManager):
+    def set_managers(self, service_manager: "ServiceManager", window_manager: "WindowManager",
+                     task_manager: "TaskManager"):
         """Set references to other managers and subscribe to relevant events."""
         self.service_manager = service_manager
         self.window_manager = window_manager
@@ -100,6 +103,38 @@ class WorkflowManager:
         finally:
             self.event_bus.emit("streaming_end")
 
+    async def _run_build_workflow(self, prompt: str, existing_files: Optional[Dict[str, str]]):
+        """
+        Orchestrates the entire build process from planning to final code generation.
+        """
+        architect_service = self.service_manager.get_architect_service()
+        coordinator = self.service_manager.get_generation_coordinator()
+        project_manager = self.service_manager.get_project_manager()
+
+        # 1. Get the plan from the Architect
+        whiteboard_plan = await architect_service.create_whiteboard_plan(prompt, existing_files)
+        if not whiteboard_plan or not whiteboard_plan.get("tasks"):
+            self.log("error", "Build workflow failed: Could not create a valid plan.")
+            self.event_bus.emit("ai_response_ready", "Sorry, I couldn't create a plan for that request.")
+            return
+
+        # 2. Execute the plan with the Coordinator
+        final_code = await coordinator.coordinate_generation(whiteboard_plan, existing_files)
+        if not final_code:
+            self.log("error", "Build workflow failed: Code generation returned no files.")
+            self.event_bus.emit("ai_response_ready", "Sorry, the code generation failed unexpectedly.")
+            return
+
+        # 3. Finalize: save files and notify the UI
+        if project_manager and project_manager.git_manager:
+            self.log("info", "Build complete. Writing and staging files.")
+            project_manager.git_manager.write_and_stage_files(final_code)
+            commit_message = f"AI generation based on prompt: {prompt[:80]}"
+            project_manager.git_manager.commit_staged_files(commit_message)
+
+        # This event updates the file tree and editor tabs with the final, corrected code
+        self.event_bus.emit("code_generation_complete", final_code)
+
     def handle_user_request(self, prompt: str, conversation_history: list,
                             image_bytes: Optional[bytes] = None, image_media_type: Optional[str] = None,
                             code_context: Optional[Dict[str, str]] = None):
@@ -120,15 +155,12 @@ class WorkflowManager:
         if interaction_mode == InteractionMode.PLAN:
             workflow_coroutine = self._run_aura_workflow(prompt, conversation_history, image_bytes, image_media_type)
         elif interaction_mode == InteractionMode.BUILD:
-            # Logic for custom non-Python prompts has been removed.
-            # The architect service is now called directly without custom prompts.
-            architect_service = self.service_manager.get_architect_service()
             if app_state == AppState.BOOTSTRAP:
                 self._last_generated_code = None
-                workflow_coroutine = architect_service.generate_or_modify(prompt, existing_files=None)
+                workflow_coroutine = self._run_build_workflow(prompt, existing_files=None)
             elif app_state == AppState.MODIFY:
                 existing_files = self.service_manager.get_project_manager().get_project_files()
-                workflow_coroutine = architect_service.generate_or_modify(prompt, existing_files)
+                workflow_coroutine = self._run_build_workflow(prompt, existing_files)
         else:
             self.log("error", f"Unknown interaction mode: {interaction_mode}")
             return
@@ -166,7 +198,7 @@ class WorkflowManager:
         self._is_plugin_override_active = False
 
     def handle_review_and_fix_request(self, error_report: str):
-        # This method is retained for plugin compatibility but its core logic is removed.
+        # This method is retained for plugin compatibility but its core logic is disabled.
         if error_report:
             self.log("warning", "Review and fix from plugin was requested, but internal execution is disabled.")
         else:

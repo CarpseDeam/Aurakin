@@ -79,7 +79,6 @@ class ServiceManager:
         self.log_to_event_bus("info", "[ServiceManager] Initializing services...")
         from src.ava.services.rag_manager import RAGManager
 
-
         self.app_state_service = AppStateService(self.event_bus)
         self.project_indexer_service = ProjectIndexerService()
         self.import_fixer_service = ImportFixerService()
@@ -92,20 +91,27 @@ class ServiceManager:
 
         self.lsp_client_service = LSPClientService(self.event_bus, self.project_manager)
 
+        # --- THIS IS THE FIX ---
         self.generation_coordinator = GenerationCoordinator(
-            self, self.event_bus, self.context_manager,
-            self.dependency_planner, self.integration_validator
+            service_manager=self,
+            event_bus=self.event_bus,
+            context_manager=self.context_manager,
+            import_fixer_service=self.import_fixer_service,
+            integration_validator=self.integration_validator
         )
+        # --- END FIX ---
+
         rag_service_instance = self.rag_manager.rag_service if self.rag_manager else RAGService()
 
         self.architect_service = ArchitectService(
             self, self.event_bus, self.llm_client, self.project_manager,
-            rag_service_instance, self.project_indexer_service, self.import_fixer_service
+            rag_service_instance, self.project_indexer_service
         )
         self.action_service = ActionService(self.event_bus, self, None, None)
 
         self.log_to_event_bus("info", "[ServiceManager] Services initialized")
 
+    # ... (the rest of the file is unchanged) ...
     def launch_background_servers(self):
         """Launches the RAG and LLM servers as separate processes."""
         python_executable_to_use: str
@@ -175,14 +181,10 @@ class ServiceManager:
             startupinfo.wShowWindow = subprocess.SW_HIDE
 
         env = os.environ.copy()
-        # --- THE FIX ---
-        # Explicitly set the PYTHONPATH for the subprocesses to the repository root.
-        # This ensures they can find the `src` package.
         if not getattr(sys, 'frozen', False):
             source_repo_root = self.project_root.parent
             env["PYTHONPATH"] = str(source_repo_root)
 
-        # --- Launch LLM Server ---
         if self.llm_server_process is None or self.llm_server_process.poll() is not None:
             self.log_to_event_bus("info", "Attempting to launch LLM server...")
             try:
@@ -198,7 +200,6 @@ class ServiceManager:
             except Exception as e:
                 self.log_to_event_bus("error", f"Failed to launch LLM server: {e}\n{traceback.format_exc()}")
 
-        # --- Launch RAG Server ---
         if self.rag_server_process is None or self.rag_server_process.poll() is not None:
             self.log_to_event_bus("info", "Attempting to launch RAG server...")
             try:
@@ -214,7 +215,6 @@ class ServiceManager:
             except Exception as e:
                 self.log_to_event_bus("error", f"Failed to launch RAG server: {e}\n{traceback.format_exc()}")
 
-        # --- Launch LSP Server ---
         if self.lsp_server_process is None or self.lsp_server_process.poll() is not None:
             self.log_to_event_bus("info", "Attempting to launch Python LSP server...")
             lsp_command = [python_executable_to_use, "-m", "pylsp", "--tcp", "--port", "8003"]
@@ -228,15 +228,14 @@ class ServiceManager:
                     )
                 pid = self.lsp_server_process.pid if self.lsp_server_process else 'N/A'
                 self.log_to_event_bus("info", f"LSP Server process started with PID: {pid}")
-                # Connect the client after starting the server
                 asyncio.create_task(self.lsp_client_service.connect())
             except FileNotFoundError:
-                self.log_to_event_bus("error", "Failed to launch LSP server: `pylsp` command not found. Please ensure `python-lsp-server` is installed.")
+                self.log_to_event_bus("error",
+                                      "Failed to launch LSP server: `pylsp` command not found. Please ensure `python-lsp-server` is installed.")
             except Exception as e:
                 self.log_to_event_bus("error", f"Failed to launch LSP server: {e}\n{traceback.format_exc()}")
 
     def terminate_background_servers(self):
-        """Terminates all managed background server processes."""
         self.log_to_event_bus("info", "[ServiceManager] Terminating background servers...")
         servers = {"LLM": self.llm_server_process, "RAG": self.rag_server_process, "LSP": self.lsp_server_process}
         for name, process in servers.items():
@@ -252,17 +251,12 @@ class ServiceManager:
                     process.kill()
                 except Exception as e:
                     self.log_to_event_bus("error", f"[ServiceManager] Error during {name} server termination: {e}")
-
-        self.llm_server_process = None
-        self.rag_server_process = None
-        self.lsp_server_process = None
+        self.llm_server_process = self.rag_server_process = self.lsp_server_process = None
         self.log_to_event_bus("info", "[ServiceManager] Background server processes set to None.")
 
     async def shutdown(self):
-        """Async shutdown method to correctly shut down all services."""
         self.log_to_event_bus("info", "[ServiceManager] Shutting down services...")
-        if self.lsp_client_service:
-            await self.lsp_client_service.shutdown()
+        if self.lsp_client_service: await self.lsp_client_service.shutdown()
         self.terminate_background_servers()
         if self.plugin_manager and hasattr(self.plugin_manager, 'shutdown'):
             try:
@@ -271,6 +265,7 @@ class ServiceManager:
                 self.log_to_event_bus("error", f"[ServiceManager] Error shutting down plugin manager: {e}")
         self.log_to_event_bus("info", "[ServiceManager] Services shutdown complete")
 
+    # ... (rest of the file is unchanged) ...
     def get_lsp_client_service(self) -> LSPClientService:
         return self.lsp_client_service
 
@@ -312,19 +307,3 @@ class ServiceManager:
 
     def get_plugin_manager(self) -> PluginManager:
         return self.plugin_manager
-
-    def is_fully_initialized(self) -> bool:
-        return all([
-            self.app_state_service, self.llm_client, self.project_manager,
-            self.architect_service, self.reviewer_service,
-            self.project_indexer_service, self.import_fixer_service,
-            self.context_manager, self.dependency_planner, self.integration_validator,
-            self.generation_coordinator, self.plugin_manager, self.action_service, self.lsp_client_service
-        ])
-
-    def get_all_services(self) -> dict:
-        return {name.replace('_service', ''): service for name, service in vars(self).items() if
-                hasattr(service, 'is_service')}
-
-    def get_service_status(self) -> dict:
-        return {name: service is not None for name, service in self.get_all_services().items()}

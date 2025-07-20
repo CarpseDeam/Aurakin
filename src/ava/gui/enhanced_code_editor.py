@@ -283,13 +283,10 @@ class EnhancedCodeEditor(QPlainTextEdit):
                 cursor.insertText('# ')
         cursor.endEditBlock()
 
-    def animate_line_highlight(self, start_line: int, end_line: int):
+    def highlight_line_range(self, start_line: int, end_line: int):
         """
         Highlights a range of lines to indicate a pending change, typically before a deletion.
-
-        Args:
-            start_line: The 1-based starting line number.
-            end_line: The 1-based ending line number.
+        This replaces the old 'animate_line_highlight' for clarity.
         """
         self.animation_selections.clear()
         logger.info(f"Highlighting lines {start_line}-{end_line} for animation.")
@@ -310,52 +307,39 @@ class EnhancedCodeEditor(QPlainTextEdit):
 
         self.highlight_current_line()
 
-    def animate_text_deletion(self, start_line: int, start_col: int, end_line: int, end_col: int):
+    def delete_highlighted_range(self):
         """
-        Deletes a specific range of text, typically after it has been highlighted.
-
-        Args:
-            start_line: The 1-based starting line number.
-            start_col: The 0-based starting column.
-            end_line: The 1-based ending line number.
-            end_col: The 0-based ending column.
+        Deletes the text ranges stored in self.animation_selections.
+        This is designed to be called after highlight_line_range.
         """
-        logger.info(f"Deleting text from {start_line}:{start_col} to {end_line}:{end_col}.")
-        cursor = self.textCursor()
-
-        start_block = self.document().findBlockByNumber(start_line - 1)
-        end_block = self.document().findBlockByNumber(end_line - 1)
-
-        if not start_block.isValid() or not end_block.isValid():
-            logger.error("Invalid block found during text deletion animation.")
+        if not self.animation_selections:
             return
 
-        cursor.setPosition(start_block.position() + start_col)
-        cursor.setPosition(end_block.position() + end_col, QTextCursor.MoveMode.KeepAnchor)
-
-        cursor.removeSelectedText()
-
-        # After deletion, clear the highlight and update the view
-        self.animation_selections.clear()
-        self.highlight_current_line()
-
-    def animate_stream_insert(self, line: int, col: int, chunk: str):
-        """
-        Inserts a chunk of text at a specific position for streaming animations.
-
-        Args:
-            line: The 1-based line number for insertion.
-            col: The 0-based column for insertion.
-            chunk: The string of text to insert.
-        """
         cursor = self.textCursor()
+        cursor.beginEditBlock()
 
+        # Sort selections from bottom to top to not invalidate cursor positions during deletion
+        for selection in sorted(self.animation_selections, key=lambda s: s.cursor.position(), reverse=True):
+            # Create a new cursor for the selection to be deleted
+            delete_cursor = QTextCursor(self.document())
+            delete_cursor.setPosition(selection.cursor.selectionStart())
+            delete_cursor.setPosition(selection.cursor.selectionEnd(), QTextCursor.MoveMode.KeepAnchor)
+            delete_cursor.removeSelectedText()
+
+        cursor.endEditBlock()
+        self.animation_selections.clear()
+        self.highlight_current_line()  # Redraw highlights
+
+    def set_cursor_position(self, line: int, col: int):
+        """Moves the editor's cursor to a specific line and column."""
+        cursor = self.textCursor()
         block = self.document().findBlockByNumber(line - 1)
         if not block.isValid():
-            logger.error(f"Invalid block for line {line} during stream insert animation.")
+            logger.warning(f"Cannot set cursor: Invalid line number {line}")
             return
 
+        # Clamp column to be within the line's length
+        col = min(col, block.length() - 1)
         cursor.setPosition(block.position() + col)
-        cursor.insertText(chunk)
-        self.setTextCursor(cursor)  # Ensure the editor's main cursor is updated
+        self.setTextCursor(cursor)
         self.ensureCursorVisible()

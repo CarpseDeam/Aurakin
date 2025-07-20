@@ -242,7 +242,7 @@ class EditorTabManager:
                 self.editors[abs_path_str].set_diagnostics(diagnostics)
         except Exception as e:
             print(f"[EditorTabManager] Error handling diagnostics for {uri}: {e}")
-            
+
     def _get_editor_for_filename(self, filename: str) -> Optional[EnhancedCodeEditor]:
         if not self.project_manager or not self.project_manager.active_project_path:
             return None

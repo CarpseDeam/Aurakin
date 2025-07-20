@@ -1,10 +1,13 @@
 # src/ava/core/managers/event_coordinator.py
 import asyncio
+from typing import TYPE_CHECKING
 from src.ava.core.event_bus import EventBus
-from src.ava.core.managers.service_manager import ServiceManager
-from src.ava.core.managers.window_manager import WindowManager
-from src.ava.core.managers.task_manager import TaskManager
-from src.ava.core.managers.workflow_manager import WorkflowManager
+
+if TYPE_CHECKING:
+    from src.ava.core.managers.service_manager import ServiceManager
+    from src.ava.core.managers.window_manager import WindowManager
+    from src.ava.core.managers.task_manager import TaskManager
+    from src.ava.core.managers.workflow_manager import WorkflowManager
 
 
 class EventCoordinator:
@@ -15,14 +18,14 @@ class EventCoordinator:
 
     def __init__(self, event_bus: EventBus):
         self.event_bus = event_bus
-        self.service_manager: ServiceManager = None
-        self.window_manager: WindowManager = None
-        self.task_manager: TaskManager = None
-        self.workflow_manager: WorkflowManager = None
+        self.service_manager: "ServiceManager" = None
+        self.window_manager: "WindowManager" = None
+        self.task_manager: "TaskManager" = None
+        self.workflow_manager: "WorkflowManager" = None
         print("[EventCoordinator] Initialized")
 
-    def set_managers(self, service_manager: ServiceManager, window_manager: WindowManager, task_manager: TaskManager,
-                     workflow_manager: WorkflowManager):
+    def set_managers(self, service_manager: "ServiceManager", window_manager: "WindowManager", task_manager: "TaskManager",
+                     workflow_manager: "WorkflowManager"):
         """Set references to other managers."""
         self.service_manager = service_manager
         self.window_manager = window_manager

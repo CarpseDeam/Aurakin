@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional
 log_file_path = Path(sys.executable).parent / "rag_server_debug.log" if getattr(sys, 'frozen', False) else Path(
     __file__).parent / "rag_server_debug.log"
 rag_logger = logging.getLogger("RAGServer")
-rag_logger.setLevel(logging.DEBUG)
+rag_logger.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s')
 
 try:
