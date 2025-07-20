@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
 
@@ -15,6 +14,7 @@ from src.ava.prompts import (
     MODIFICATION_PLANNER_PROMPT,
     SCAFFOLDER_PROMPT
 )
+from src.ava.prompts.master_rules import JSON_OUTPUT_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE
 from src.ava.services.rag_service import RAGService
 from src.ava.services.project_indexer_service import ProjectIndexerService
 from src.ava.services.import_fixer_service import ImportFixerService
@@ -23,6 +23,7 @@ from src.ava.services.context_manager import ContextManager
 from src.ava.services.dependency_planner import DependencyPlanner
 from src.ava.services.integration_validator import IntegrationValidator
 from src.ava.utils.code_summarizer import CodeSummarizer
+
 
 if TYPE_CHECKING:
     from src.ava.core.managers import ServiceManager
@@ -190,16 +191,19 @@ class ArchitectService:
             file_plan_json=json.dumps(full_plan, indent=2),
             symbol_index_json=json.dumps(symbol_index, indent=2),
             code_context_json=json.dumps(code_context, indent=2),
+            TYPE_HINTING_RULE=TYPE_HINTING_RULE,
+            DOCSTRING_RULE=DOCSTRING_RULE,
+            JSON_OUTPUT_RULE=JSON_OUTPUT_RULE
         )
 
-        provider, model = self.llm_client.get_model_for_role("scaffolder")
+        provider, model = self.llm_client.get_model_for_role("architect")
         if not provider or not model:
-            self.handle_error("scaffolder", "No model configured for scaffolder role.")
+            self.handle_error("scaffolder", "No model configured for architect role.")
             return None
 
         raw_scaffold_response = ""
         try:
-            async for chunk in self.llm_client.stream_chat(provider, model, scaffold_prompt, "scaffolder"):
+            async for chunk in self.llm_client.stream_chat(provider, model, scaffold_prompt, "architect"):
                 raw_scaffold_response += chunk
 
             scaffold_json = self._parse_json_response(raw_scaffold_response)
@@ -320,15 +324,18 @@ class ArchitectService:
     def _parse_json_response(self, response: str) -> dict:
         match = re.search(r'\{.*\}', response, re.DOTALL)
         if not match:
+            self.log("error", "No JSON object found in response.", response)
             raise ValueError("No JSON object found in the response.")
         try:
             return json.loads(match.group(0))
         except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to decode JSON. Error: {e}. Content: '{match.group(0)[:200]}...'")
+            self.log("error", f"Failed to decode JSON. Error: {e}. Content: '{match.group(0)[:200]}...'", response)
+            raise ValueError(f"Failed to decode JSON. Error: {e}.")
 
     def handle_error(self, agent: str, error_msg: str, response: str = ""):
         self.log("error", f"{agent} failed: {error_msg}\nResponse: {response}")
         self.event_bus.emit("ai_response_ready", f"Sorry, the {agent} failed.")
 
-    def log(self, level: str, message: str):
-        self.event_bus.emit("log_message_received", "ArchitectService", level, message)
+    def log(self, level: str, message: str, details: str = ""):
+        full_message = f"{message}\nDetails: {details}" if details else message
+        self.event_bus.emit("log_message_received", "ArchitectService", level, full_message)

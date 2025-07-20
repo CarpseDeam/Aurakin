@@ -2,10 +2,11 @@
 from __future__ import annotations
 import sys
 import subprocess
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 import traceback  # For detailed error logging
-import asyncio # <-- NEW
+import asyncio
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
@@ -15,7 +16,7 @@ from src.ava.services import (
     ActionService, AppStateService, ArchitectService,
     ProjectIndexerService, ImportFixerService,
     GenerationCoordinator, ContextManager, DependencyPlanner, IntegrationValidator, RAGService,
-    LSPClientService # <-- NEW
+    LSPClientService
 )
 
 if TYPE_CHECKING:
@@ -39,7 +40,7 @@ class ServiceManager:
         self.app_state_service: AppStateService = None
         self.action_service: "ActionService" = None
         self.rag_manager: "RAGManager" = None
-        self.lsp_client_service: LSPClientService = None # <-- NEW
+        self.lsp_client_service: LSPClientService = None
         self.architect_service: ArchitectService = None
         self.project_indexer_service: ProjectIndexerService = None
         self.import_fixer_service: ImportFixerService = None
@@ -78,6 +79,7 @@ class ServiceManager:
         self.log_to_event_bus("info", "[ServiceManager] Initializing services...")
         from src.ava.services.rag_manager import RAGManager
 
+
         self.app_state_service = AppStateService(self.event_bus)
         self.project_indexer_service = ProjectIndexerService()
         self.import_fixer_service = ImportFixerService()
@@ -88,7 +90,7 @@ class ServiceManager:
         if self.project_manager:
             self.rag_manager.set_project_manager(self.project_manager)
 
-        self.lsp_client_service = LSPClientService(self.event_bus, self.project_manager) # <-- NEW
+        self.lsp_client_service = LSPClientService(self.event_bus, self.project_manager)
 
         self.generation_coordinator = GenerationCoordinator(
             self, self.event_bus, self.context_manager,
@@ -172,6 +174,14 @@ class ServiceManager:
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
 
+        env = os.environ.copy()
+        # --- THE FIX ---
+        # Explicitly set the PYTHONPATH for the subprocesses to the repository root.
+        # This ensures they can find the `src` package.
+        if not getattr(sys, 'frozen', False):
+            source_repo_root = self.project_root.parent
+            env["PYTHONPATH"] = str(source_repo_root)
+
         # --- Launch LLM Server ---
         if self.llm_server_process is None or self.llm_server_process.poll() is not None:
             self.log_to_event_bus("info", "Attempting to launch LLM server...")
@@ -180,7 +190,8 @@ class ServiceManager:
                     self.llm_server_process = subprocess.Popen(
                         [python_executable_to_use, str(llm_script_path)], cwd=str(cwd_for_servers),
                         stdout=llm_log_handle, stderr=subprocess.STDOUT,
-                        startupinfo=startupinfo
+                        startupinfo=startupinfo,
+                        env=env
                     )
                 pid = self.llm_server_process.pid if self.llm_server_process else 'N/A'
                 self.log_to_event_bus("info", f"LLM Server process started with PID: {pid}")
@@ -195,7 +206,8 @@ class ServiceManager:
                     self.rag_server_process = subprocess.Popen(
                         [python_executable_to_use, str(rag_script_path)], cwd=str(cwd_for_servers),
                         stdout=rag_log_handle, stderr=subprocess.STDOUT,
-                        startupinfo=startupinfo
+                        startupinfo=startupinfo,
+                        env=env
                     )
                 pid = self.rag_server_process.pid if self.rag_server_process else 'N/A'
                 self.log_to_event_bus("info", f"RAG Server process started with PID: {pid}")
@@ -211,7 +223,8 @@ class ServiceManager:
                     self.lsp_server_process = subprocess.Popen(
                         lsp_command, cwd=str(cwd_for_servers),
                         stdout=lsp_log_handle, stderr=subprocess.STDOUT,
-                        startupinfo=startupinfo
+                        startupinfo=startupinfo,
+                        env=env
                     )
                 pid = self.lsp_server_process.pid if self.lsp_server_process else 'N/A'
                 self.log_to_event_bus("info", f"LSP Server process started with PID: {pid}")
@@ -258,7 +271,7 @@ class ServiceManager:
                 self.log_to_event_bus("error", f"[ServiceManager] Error shutting down plugin manager: {e}")
         self.log_to_event_bus("info", "[ServiceManager] Services shutdown complete")
 
-    def get_lsp_client_service(self) -> LSPClientService: # <-- NEW GETTER
+    def get_lsp_client_service(self) -> LSPClientService:
         return self.lsp_client_service
 
     def get_app_state_service(self) -> AppStateService:

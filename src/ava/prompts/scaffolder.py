@@ -45,8 +45,8 @@ SCAFFOLDER_PROMPT = textwrap.dedent(f"""
     2.  **LEAVE DETAILED INSTRUCTIONS:** Inside every function or method body, you MUST write numbered comments (`# 1.`, `# 2.`, etc.) that clearly and unambiguously explain the logic the junior developer needs to implement. These comments are the most critical part of your output.
 
     3.  **ADHERE TO BEST PRACTICES:**
-        *   {TYPE_HINTING_RULE.strip()}
-        *   {DOCSTRING_RULE.strip()}
+        *   {TYPE_HINTING_RULE}
+        *   {DOCSTRING_RULE}
 
     4.  **OUTPUT FORMAT:** Your entire response must be a single JSON object containing one key, "scaffold_code", whose value is the complete, raw Python code for the scaffolded file.
 
@@ -54,9 +54,9 @@ SCAFFOLDER_PROMPT = textwrap.dedent(f"""
 
     **EXAMPLE OF A PERFECT RESPONSE:**
     ```json
-    {{
+    {{{{
       "scaffold_code": "import requests\\n\\nclass APIClient:\\n    def __init__(self, api_key: str):\\n        self.api_key = api_key\\n\\n    def get_weather_data(self, city: str) -> dict | None:\\n        \\\"\\\"\\\"Fetches weather data for a given city.\\n\\n        Args:\\n            city: The name of the city.\\n\\n        Returns:\\n            A dictionary with weather data or None on error.\\n        \\\"\\\"\\\"\\n        # 1. Construct the API URL using the base URL, city, and api_key.\\n        # 2. Use a try/except block to handle potential network errors.\\n        # 3. Make a GET request to the URL using the 'requests' library.\\n        # 4. Check if the response status_code is 200.\\n        # 5. If it is 200, return the JSON content of the response.\\n        # 6. Otherwise, log an error and return None.\\n        pass\\n"
-    }}
+    }}}}
     ```
 
     Now, generate the scaffold for `{{filename}}`.

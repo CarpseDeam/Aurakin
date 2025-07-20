@@ -1,24 +1,16 @@
 {
-  "roles": {
-    "architect": {
-      "model": "claude-3-opus-20240229",
-      "temperature": 0.1
-    },
-    "scaffolder": {
-      "model": "claude-3-sonnet-20240229",
-      "temperature": 0.0
-    },
-    "coder": {
-      "model": "claude-3-opus-20240229",
-      "temperature": 0.0
-    },
-    "filler": {
-      "model": "ollama/codellama:13b",
-      "temperature": 0.2
-    },
-    "creative": {
-      "model": "claude-3-sonnet-20240229",
-      "temperature": 0.5
-    }
+  "role_assignments": {
+    "architect": "google/gemini-2.5-pro",
+    "coder": "ollama/deepseek-coder-v2:16b",
+    "filler": "ollama/codellama:7b",
+    "chat": "deepseek/deepseek-chat",
+    "reviewer": "google/gemini-2.5-flash"
+  },
+  "role_temperatures": {
+    "architect": 0.7,
+    "coder": 0.1,
+    "filler": 0.1,
+    "chat": 0.7,
+    "reviewer": 0.7
   }
 }

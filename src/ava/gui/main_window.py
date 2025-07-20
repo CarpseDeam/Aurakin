@@ -22,7 +22,7 @@ class MainWindow(QMainWindow):  # <-- PROMOTED from QWidget to QMainWindow
         self._closing = False
 
         # --- Window Properties ---
-        self.setWindowTitle("AvaKin")
+        self.setWindowTitle("AvAPylon")
         self.resize(1400, 900)
         self.setMinimumSize(800, 600)
 

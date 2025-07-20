@@ -44,7 +44,8 @@ class ActionService:
                 chat_input = chat_interface.input_widget
                 chat_input.set_text_and_focus(prompt_text)
 
-    def handle_new_project(self):
+    # CHANGE #1: Make this function async
+    async def handle_new_project(self):
         project_manager = self.service_manager.get_project_manager()
         rag_manager = self.service_manager.get_rag_manager()
         app_state_service = self.service_manager.get_app_state_service()
@@ -58,8 +59,9 @@ class ActionService:
             return
 
         project_path = Path(project_path_str)
-        # THE FIX: Switch context now also triggers a resync of the knowledge base.
-        asyncio.create_task(rag_manager.switch_project_context(project_path))
+
+        # CHANGE #2: Await the RAG context switch
+        await rag_manager.switch_project_context(project_path)
 
         app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
 
@@ -75,7 +77,8 @@ class ActionService:
         if project_manager.git_manager:
             self.event_bus.emit("branch_updated", project_manager.git_manager.get_active_branch_name())
 
-    def handle_load_project(self):
+    # CHANGE #3: Make this function async too for consistency
+    async def handle_load_project(self):
         project_manager = self.service_manager.get_project_manager()
         rag_manager = self.service_manager.get_rag_manager()
         app_state_service = self.service_manager.get_app_state_service()
@@ -88,8 +91,9 @@ class ActionService:
             project_path_str = project_manager.load_project(path)
             if project_path_str:
                 project_path = Path(project_path_str)
-                # THE FIX: Switch context now also triggers a resync of the knowledge base.
-                asyncio.create_task(rag_manager.switch_project_context(project_path))
+
+                # CHANGE #4: Await the RAG context switch here as well
+                await rag_manager.switch_project_context(project_path)
 
                 branch_name = project_manager.begin_modification_session()
                 self.log("info", f"Starting modification session on branch: {branch_name}")

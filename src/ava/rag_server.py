@@ -1,4 +1,4 @@
-# rag_server.py
+# src/ava/rag_server.py
 
 import os
 import sys
@@ -16,19 +16,17 @@ rag_logger.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s')
 
 try:
-    # Ensure the log directory exists
     log_file_path.parent.mkdir(parents=True, exist_ok=True)
     fh = RotatingFileHandler(log_file_path, maxBytes=5 * 1024 * 1024, backupCount=2, encoding='utf-8')
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     rag_logger.addHandler(fh)
 except Exception as e:
-    # Fallback to console if file logging fails
     print(f"CRITICAL: Failed to set up RAG server file logger at {log_file_path}: {e}", file=sys.stderr)
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    rag_logger = logging.getLogger("RAGServer")  # Re-get logger if basicConfig was used
+    rag_logger = logging.getLogger("RAGServer")
 
-ch = logging.StreamHandler(sys.stdout)  # Always add stream handler for console visibility
+ch = logging.StreamHandler(sys.stdout)
 ch.setLevel(logging.INFO)
 ch.setFormatter(formatter)
 rag_logger.addHandler(ch)
@@ -169,7 +167,6 @@ def reset_project_collection():
     client = app_state.get("chroma_client_project")
     if not client:
         rag_logger.warning("/reset_project_collection called but no project client is active.")
-        # This is not a failure, just means there's nothing to reset.
         return {"status": "success", "message": "No active project collection to reset."}
 
     try:
@@ -179,7 +176,6 @@ def reset_project_collection():
         rag_logger.info(f"Project collection '{PROJECT_COLLECTION_NAME}' has been successfully reset.")
         return {"status": "success", "message": "Project collection has been reset."}
     except ValueError:
-        # This happens if the collection didn't exist in the first place, which is fine.
         rag_logger.info(f"Collection '{PROJECT_COLLECTION_NAME}' did not exist, creating new one.")
         app_state["project_collection"] = client.get_or_create_collection(name=PROJECT_COLLECTION_NAME)
         return {"status": "success", "message": "Project collection did not exist and has been created."}
@@ -213,7 +209,7 @@ def add_documents(request: AddRequest):
         collection_to_use = app_state.get("global_collection")
         if not collection_to_use:
             raise HTTPException(status_code=503, detail="Global RAG collection is not active.")
-    else:  # Default to project
+    else:
         collection_to_use = app_state.get("project_collection")
         if not collection_to_use:
             raise HTTPException(status_code=503, detail="No active PROJECT RAG collection.")
@@ -248,7 +244,7 @@ def query_rag(request: QueryRequest) -> QueryResponse:
         collection_to_query = app_state.get("global_collection")
         if not collection_to_query:
             return QueryResponse(context="Global knowledge base is not active.", source_collection="global")
-    else:  # Default to project
+    else:
         collection_to_query = app_state.get("project_collection")
         if not collection_to_query:
             return QueryResponse(context="No knowledge base is active for the current project.",
@@ -280,12 +276,11 @@ def query_rag(request: QueryRequest) -> QueryResponse:
         rag_logger.error(f"ERROR during query of '{collection_name_for_log}': {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-
 if __name__ == "__main__":
     if not os.getenv("GLOBAL_RAG_DB_PATH"):
         rag_logger.warning("GLOBAL_RAG_DB_PATH not set. Global KB will be limited.")
     try:
-        uvicorn.run("rag_server:rag_app", host=HOST, port=PORT, reload=False)
+        uvicorn.run("src.ava.rag_server:rag_app", host=HOST, port=PORT, reload=False)
     except Exception as e:
         rag_logger.critical(f"Failed to start RAG server: {e}", exc_info=True)
         sys.exit(1)
