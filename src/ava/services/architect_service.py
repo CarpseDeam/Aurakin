@@ -2,80 +2,206 @@
 from __future__ import annotations
 import asyncio
 import json
+import logging
 import re
-import textwrap
-from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Any
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
 from src.ava.core.project_manager import ProjectManager
-from src.ava.prompts import (
-    HIERARCHICAL_PLANNER_PROMPT,
-    MODIFICATION_PLANNER_PROMPT,
-    SCAFFOLDER_PROMPT
-)
-from src.ava.prompts.master_rules import JSON_OUTPUT_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE
+from src.ava.prompts.planner import TASK_PLANNER_PROMPT, LINE_LOCATOR_PROMPT
 from src.ava.services.rag_service import RAGService
-from src.ava.services.project_indexer_service import ProjectIndexerService
-from src.ava.services.import_fixer_service import ImportFixerService
-from src.ava.services.generation_coordinator import GenerationCoordinator
-from src.ava.services.context_manager import ContextManager
-from src.ava.services.dependency_planner import DependencyPlanner
-from src.ava.services.integration_validator import IntegrationValidator
-from src.ava.utils.code_summarizer import CodeSummarizer
-
 
 if TYPE_CHECKING:
     from src.ava.core.managers import ServiceManager
 
-
-INSTRUCTION_GENERATOR_PROMPT = textwrap.dedent("""
-    You are an AI assistant that translates a high-level purpose into a specific, actionable, natural-language instruction for a coding AI.
-
-    **CONTEXT:**
-    - **File to Modify:** `{filename}`
-    - **High-Level Purpose:** `{purpose}`
-    - **Original Code:**
-    ```python
-    {original_code}
-    ```
-
-    **TASK:**
-    Based on the purpose and the original code, generate a single, concise `surgical_instruction`. This instruction should be an imperative command telling another AI exactly what to change in the code. The instruction should be detailed enough that the coding AI can generate a diff/patch from it.
-
-    **EXAMPLE:**
-    - **Purpose:** "Add error handling for division by zero."
-    - **Instruction:** "In the 'divide' function, add a check to see if the denominator 'b' is zero. If it is, raise a ValueError with a descriptive message."
-
-    **OUTPUT FORMAT:**
-    Your response MUST be ONLY the raw text of the surgical instruction. Do not add any conversational text, explanations, or markdown.
-
-    Generate the surgical instruction now.
-""")
+logger = logging.getLogger(__name__)
 
 
 class ArchitectService:
+    """
+    A service that functions as a high-level planner for code generation.
+
+    It deconstructs a user's request into a structured "Whiteboard" plan,
+    which includes a series of tasks. For tasks involving code modification,
+    it also pinpoints the exact line numbers to be changed.
+    """
+
     def __init__(self, service_manager: 'ServiceManager', event_bus: EventBus,
                  llm_client: LLMClient, project_manager: ProjectManager,
-                 rag_service: RAGService, project_indexer: ProjectIndexerService,
-                 import_fixer: ImportFixerService):
+                 rag_service: RAGService):
+        """
+        Initializes the ArchitectService.
+
+        Args:
+            service_manager: The main service manager for dependency injection.
+            event_bus: The application's event bus for communication.
+            llm_client: The client for interacting with language models.
+            project_manager: Manages the active project's state and files.
+            rag_service: The service for retrieving context from knowledge bases.
+        """
         self.service_manager = service_manager
         self.event_bus = event_bus
         self.llm_client = llm_client
         self.project_manager = project_manager
         self.rag_service = rag_service
-        self.project_indexer = project_indexer
-        self.import_fixer = import_fixer
-        self.context_manager = ContextManager(service_manager)
-        self.dependency_planner = DependencyPlanner(service_manager)
-        self.integration_validator = IntegrationValidator(service_manager)
-        self.generation_coordinator = GenerationCoordinator(
-            service_manager, event_bus, self.context_manager,
-            self.dependency_planner, self.integration_validator
+
+    async def create_whiteboard_plan(self, user_request: str, existing_files: Optional[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+        """
+        Creates a detailed, multi-step "Whiteboard" plan for code generation.
+
+        This involves two main phases:
+        1. Task Planning: Deconstructs the user request into a list of high-level tasks.
+        2. Line Location: For each modification task, pinpoints the exact code lines to be changed.
+
+        Args:
+            user_request: The user's high-level request for code changes.
+            existing_files: A dictionary of existing project files and their content.
+
+        Returns:
+            A dictionary representing the final, augmented plan, or None if planning fails.
+        """
+        self.log("info", f"Architect received request: '{user_request[:100]}...'")
+        self.event_bus.emit("agent_status_changed", "Architect", "Planning tasks...", "fa5s.tasks")
+
+        # 1. Generate the initial high-level task plan
+        task_plan = await self._generate_task_plan(user_request, existing_files)
+        if not task_plan or "tasks" not in task_plan:
+            self.log("error", "Failed to generate a valid initial task plan.")
+            return None
+
+        self.log("success", f"Generated {len(task_plan['tasks'])} high-level tasks.")
+        self.event_bus.emit("agent_status_changed", "Architect", "Locating code for changes...", "fa5s.search-location")
+
+        # 2. Augment the plan by locating lines for each modification task
+        augmented_tasks = []
+        total_tasks = len(task_plan["tasks"])
+        for i, task in enumerate(task_plan["tasks"]):
+            self.log("info", f"({i + 1}/{total_tasks}) Processing task: {task.get('description')}")
+            if task.get("type") in ["modify_code", "insert_code", "delete_code"]:
+                if "filename" not in task:
+                    self.log("warning", f"Skipping line location for task without filename: {task.get('description')}")
+                    augmented_tasks.append(task)
+                    continue
+
+                file_content = (existing_files or {}).get(task["filename"])
+                if not file_content:
+                    self.log("warning", f"Cannot locate lines for '{task['filename']}' as it does not exist. Treating as new file task.")
+                    task['type'] = 'create_file'
+                    augmented_tasks.append(task)
+                    continue
+
+                augmented_task = await self._locate_lines_for_task(task, file_content)
+                augmented_tasks.append(augmented_task)
+            else:
+                augmented_tasks.append(task)
+
+        task_plan["tasks"] = augmented_tasks
+        self.log("success", "Whiteboard plan complete with line locations.")
+        return task_plan
+
+    async def _generate_task_plan(self, user_request: str, existing_files: Optional[Dict[str, str]]) -> Optional[Dict[str, Any]]:
+        """
+        Calls the LLM with the TASK_PLANNER_PROMPT to get a high-level task list.
+
+        Args:
+            user_request: The user's natural language request.
+            existing_files: The current state of files in the project.
+
+        Returns:
+            A dictionary containing the structured task plan, or None on failure.
+        """
+        self.log("info", "Generating high-level task plan...")
+        rag_context = await self._get_combined_rag_context(user_request)
+        code_context_str = json.dumps(existing_files, indent=2) if existing_files else "{}"
+
+        prompt = TASK_PLANNER_PROMPT.format(
+            user_request=user_request,
+            code_context=code_context_str,
+            rag_context=rag_context
         )
 
+        provider, model = self.llm_client.get_model_for_role("architect")
+        if not provider or not model:
+            self.handle_error("architect", "No model configured for architect role.")
+            return None
+
+        raw_response = ""
+        try:
+            async for chunk in self.llm_client.stream_chat(provider, model, prompt, "architect"):
+                raw_response += chunk
+
+            plan = self._parse_json_response(raw_response)
+            if not plan or not isinstance(plan.get("tasks"), list):
+                self.log("error", "The AI's task plan was invalid or missing the 'tasks' list.", raw_response)
+                raise ValueError("AI did not return a valid task plan in JSON format.")
+
+            return plan
+        except (json.JSONDecodeError, ValueError) as e:
+            self.handle_error("architect", f"Task plan creation failed: {e}", raw_response)
+            return None
+        except Exception as e:
+            self.handle_error("architect", f"An unexpected error during task planning: {e}", raw_response)
+            return None
+
+    async def _locate_lines_for_task(self, task: Dict[str, Any], file_content: str) -> Dict[str, Any]:
+        """
+        Calls the LLM with the LINE_LOCATOR_PROMPT to find the start and end lines for a task.
+
+        Args:
+            task: The task dictionary, containing a description and filename.
+            file_content: The full content of the file to be analyzed.
+
+        Returns:
+            The task dictionary, augmented with 'start_line' and 'end_line' if found.
+        """
+        filename = task["filename"]
+        description = task["description"]
+        self.log("info", f"Locating lines in '{filename}' for task: '{description}'")
+
+        prompt = LINE_LOCATOR_PROMPT.format(
+            filename=filename,
+            task_description=description,
+            file_content=file_content
+        )
+
+        provider, model = self.llm_client.get_model_for_role("architect")
+        if not provider or not model:
+            self.handle_error("architect", "No model configured for architect role.")
+            return task
+
+        raw_response = ""
+        try:
+            async for chunk in self.llm_client.stream_chat(provider, model, prompt, "architect"):
+                raw_response += chunk
+
+            location_data = self._parse_json_response(raw_response)
+
+            if isinstance(location_data.get("start_line"), int) and isinstance(location_data.get("end_line"), int):
+                task["start_line"] = location_data["start_line"]
+                task["end_line"] = location_data["end_line"]
+                self.log("success", f"Located lines {task['start_line']}-{task['end_line']} for task.")
+            else:
+                self.log("warning", "Line locator did not return valid start/end lines.", raw_response)
+
+            return task
+        except (json.JSONDecodeError, ValueError) as e:
+            self.handle_error("architect", f"Line location failed for {filename}: {e}", raw_response)
+            return task
+        except Exception as e:
+            self.handle_error("architect", f"An unexpected error during line location for {filename}: {e}", raw_response)
+            return task
+
     async def _get_combined_rag_context(self, prompt: str) -> str:
+        """
+        Queries both project and global RAG collections and combines the results.
+
+        Args:
+            prompt: The user query to search for.
+
+        Returns:
+            A formatted string containing context from both knowledge bases.
+        """
         project_rag_context = await self.rag_service.query(prompt, target_collection="project")
         global_rag_context = await self.rag_service.query(prompt, target_collection="global")
 
@@ -95,300 +221,19 @@ class ArchitectService:
 
         return "\n\n---\n\n".join(combined_context_parts)
 
-    async def generate_or_modify(self, prompt: str, existing_files: dict | None) -> bool:
-        self.log("info", f"Architect task received: '{prompt}'")
-        self.event_bus.emit("agent_status_changed", "Architect", "Planning project...", "fa5s.pencil-ruler")
-        plan = None
-
-        self.log("info", "Fetching combined RAG context...")
-        combined_rag_context = await self._get_combined_rag_context(prompt)
-        self.log("info", f"Combined RAG context length: {len(combined_rag_context)} chars.")
-
-        if not existing_files:
-            self.log("info", "No existing project detected. Generating new project plan...")
-            plan = await self._generate_hierarchical_plan(prompt, combined_rag_context)
-        else:
-            self.log("info", "Existing project detected. Using default modification plan...")
-            plan = await self._generate_modification_plan(prompt, existing_files, combined_rag_context)
-
-        if plan:
-            success = await self._execute_coordinated_generation(plan, combined_rag_context, existing_files)
-        else:
-            self.log("error", "Failed to generate a valid plan. Aborting generation.")
-            success = False
-
-        if success:
-            self.log("success", "Code generation complete.")
-        else:
-            self.handle_error("coder", "Code generation failed.")
-        return success
-
-    async def _generate_hierarchical_plan(self, prompt: str, rag_context: str) -> dict | None:
-        self.log("info", "Designing project structure...")
-        plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
-        initial_plan = await self._get_plan_from_llm(plan_prompt)
-
-        if not initial_plan:
-            return None
-
-        self.log("info", "Initial plan created. Now scaffolding files...")
-        augmented_plan = await self._scaffold_plan_files(initial_plan, rag_context, existing_files=None)
-        return augmented_plan
-
-    async def _generate_modification_plan(self, prompt: str, existing_files: dict, rag_context: str) -> dict | None:
-        self.log("info", "Analyzing existing files to create a modification plan...")
-        prompt_template = MODIFICATION_PLANNER_PROMPT
-        try:
-            full_code_context_json = json.dumps(existing_files, indent=2)
-            enhanced_prompt_for_llm = f"{prompt}\n\nADDITIONAL CONTEXT FROM KNOWLEDGE BASE:\n{rag_context}"
-            plan_prompt = prompt_template.format(
-                prompt=enhanced_prompt_for_llm,
-                full_code_context=full_code_context_json
-            )
-            initial_plan = await self._get_plan_from_llm(plan_prompt)
-            if initial_plan:
-                initial_plan = self._sanitize_plan_paths(initial_plan)
-            else:
-                return None
-
-            self.log("info", "Initial modification plan created. Now augmenting plan...")
-            augmented_plan = await self._scaffold_plan_files(initial_plan, rag_context, existing_files=existing_files)
-            return augmented_plan
-        except Exception as e:
-            self.handle_error("architect", f"An unexpected error during modification planning: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-
-    async def _scaffold_plan_files(self, initial_plan: dict, rag_context: str,
-                                   existing_files: Optional[Dict[str, str]]) -> dict | None:
-        if not initial_plan or not initial_plan.get("files"):
-            return None
-
-        total_files = len(initial_plan["files"])
-        self.log("info", f"Augmenting plan for {total_files} file(s)...")
-
-        tasks = []
-        for i, file_info in enumerate(initial_plan["files"]):
-            is_modification = existing_files is not None and file_info["filename"] in existing_files
-            if is_modification:
-                original_code = existing_files.get(file_info["filename"], "")
-                tasks.append(self._generate_surgical_instruction_for_file(file_info, original_code))
-            else:
-                tasks.append(self._scaffold_single_file(file_info, initial_plan, rag_context, existing_files, i + 1, total_files))
-
-        augmented_results = await asyncio.gather(*tasks)
-
-        augmented_files = []
-        for result in augmented_results:
-            if result:
-                augmented_files.append(result)
-            else:
-                self.log("error", "A file failed to be processed during plan augmentation. Aborting plan.")
-                return None
-
-        initial_plan["files"] = augmented_files
-        return initial_plan
-
-    async def _generate_surgical_instruction_for_file(self, file_info: Dict[str, str], original_code: str) -> Optional[Dict[str, str]]:
-        filename = file_info["filename"]
-        purpose = file_info.get("purpose", "Modify the file as per the user's request.")
-
-        self.log("info", f"Generating surgical instruction for {filename}...")
-        self.event_bus.emit("agent_status_changed", "Architect", f"Detailing changes for {filename}...", "fa5s.tasks")
-
-        prompt = INSTRUCTION_GENERATOR_PROMPT.format(
-            filename=filename,
-            purpose=purpose,
-            original_code=original_code
-        )
-
-        provider, model = self.llm_client.get_model_for_role("architect")
-        if not provider or not model:
-            self.handle_error("architect", "No model configured for architect role.")
-            file_info["surgical_instruction"] = purpose
-            return file_info
-
-        instruction = ""
-        raw_response = ""
-        try:
-            async for chunk in self.llm_client.stream_chat(provider, model, prompt, "architect"):
-                raw_response += chunk
-
-            instruction = raw_response.strip()
-            if not instruction:
-                raise ValueError("LLM returned an empty instruction.")
-
-            file_info["surgical_instruction"] = instruction
-            return file_info
-        except Exception as e:
-            self.handle_error("architect", f"Failed to generate surgical instruction for {filename}: {e}", raw_response)
-            file_info["surgical_instruction"] = purpose
-            return file_info
-
-    async def _scaffold_single_file(self, file_info: Dict[str, str], full_plan: Dict, rag_context: str,
-                                    existing_files: Optional[Dict[str, str]], current_num: int,
-                                    total_num: int) -> Optional[Dict[str, str]]:
-        filename = file_info["filename"]
-        self.log("info", f"({current_num}/{total_num}) Scaffolding {filename}...")
-        self.event_bus.emit("agent_status_changed", "Scaffolder", f"Scaffolding {filename}...", "fa5s.drafting-compass")
-
-        is_modification = existing_files is not None and filename in existing_files
-        original_code_section = ""
-        if is_modification:
-            original_code = existing_files.get(filename, "")
-            original_code_section = f"\n---\n**ORIGINAL CODE OF `{filename}` (You are modifying this file):**\n```python\n{original_code}\n```"
-
-        symbol_index = {}
-        if existing_files:
-            for rel_path, content in existing_files.items():
-                if rel_path.endswith(".py"):
-                    module_path_str = rel_path.replace('.py', '').replace('/', '.')
-                    symbols_in_file = self.project_indexer.get_symbols_from_content(content, module_path_str)
-                    symbol_index.update(symbols_in_file)
-
-        code_context = existing_files.copy() if existing_files else {}
-        if filename in code_context:
-            del code_context[filename]
-
-        scaffold_prompt = SCAFFOLDER_PROMPT.format(
-            filename=filename,
-            purpose=file_info.get("purpose", ""),
-            original_code_section=original_code_section,
-            file_plan_json=json.dumps(full_plan, indent=2),
-            symbol_index_json=json.dumps(symbol_index, indent=2),
-            code_context_json=json.dumps(code_context, indent=2),
-            TYPE_HINTING_RULE=TYPE_HINTING_RULE,
-            DOCSTRING_RULE=DOCSTRING_RULE,
-            JSON_OUTPUT_RULE=JSON_OUTPUT_RULE
-        )
-
-        provider, model = self.llm_client.get_model_for_role("architect")
-        if not provider or not model:
-            self.handle_error("scaffolder", "No model configured for architect role.")
-            return None
-
-        raw_scaffold_response = ""
-        try:
-            async for chunk in self.llm_client.stream_chat(provider, model, scaffold_prompt, "architect"):
-                raw_scaffold_response += chunk
-
-            scaffold_json = self._parse_json_response(raw_scaffold_response)
-            scaffold_code = scaffold_json.get("scaffold_code")
-
-            if not scaffold_code or not isinstance(scaffold_code, str):
-                self.log("error", "Scaffolder AI's response was invalid or missing 'scaffold_code'.",
-                         raw_scaffold_response)
-                raise ValueError("AI did not return valid scaffold_code in JSON format.")
-
-            file_info["scaffold_code"] = scaffold_code
-            return file_info
-        except (json.JSONDecodeError, ValueError) as e:
-            self.handle_error("scaffolder", f"Scaffold creation failed for {filename}: {e}", raw_scaffold_response)
-            return None
-        except Exception as e:
-            self.handle_error("scaffolder", f"An unexpected error during scaffolding for {filename}: {e}",
-                              raw_scaffold_response)
-            return None
-
-    async def _get_plan_from_llm(self, plan_prompt: str) -> dict | None:
-        provider, model = self.llm_client.get_model_for_role("architect")
-        if not provider or not model:
-            self.handle_error("architect", "No model configured for architect role.")
-            return None
-        raw_plan_response = ""
-        try:
-            async for chunk in self.llm_client.stream_chat(provider, model, plan_prompt, "architect"):
-                raw_plan_response += chunk
-            plan = self._parse_json_response(raw_plan_response)
-            if not plan or not isinstance(plan.get("files"), list):
-                self.log("error", "The AI's plan was invalid or missing the 'files' list.", raw_plan_response)
-                raise ValueError("AI did not return a valid file plan in JSON format.")
-            self.log("success", f"Plan created: {len(plan['files'])} file(s).")
-            return plan
-        except (json.JSONDecodeError, ValueError) as e:
-            self.handle_error("architect", f"Plan creation failed: {e}", raw_plan_response)
-            return None
-        except Exception as e:
-            self.handle_error("architect", f"An unexpected error during planning: {e}", raw_plan_response)
-            return None
-
-    async def _execute_coordinated_generation(self, plan: dict, rag_context: str,
-                                              existing_files: Optional[Dict[str, str]]) -> bool:
-        try:
-            is_modification = existing_files is not None
-            files_to_generate = plan.get("files", [])
-            if not files_to_generate:
-                self.log("warning", "Architect created an empty plan. Nothing to generate.")
-                return True
-            project_root = self.project_manager.active_project_path
-            all_filenames = [f['filename'] for f in files_to_generate]
-            self.event_bus.emit("prepare_for_generation", all_filenames, str(project_root), is_modification)
-            await self._create_package_structure(files_to_generate)
-            await asyncio.sleep(0.1)
-            self.log("info", "Handing off to unified Generation Coordinator...")
-            generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context,
-                                                                                      existing_files)
-            if not generated_files:
-                self.log("error", "Generation coordinator returned no files.")
-                return False
-            first_purpose = plan["files"][0].get("purpose", "AI-driven changes")
-            commit_message = f"feat: {first_purpose[:50]}..."
-            self.project_manager.save_and_commit_files(generated_files, commit_message)
-            self.log("success", "Project changes committed successfully.")
-            self.event_bus.emit("code_generation_complete", generated_files)
-            return True
-        except Exception as e:
-            self.handle_error("coder", f"Coordinated generation failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
-
-    def _sanitize_plan_paths(self, plan: dict) -> dict:
-        if not plan or 'files' not in plan: return plan
-        sanitized_files = []
-        for file_entry in plan.get('files', []):
-            original_filename_str = file_entry.get('filename')
-            if not original_filename_str: continue
-            p = Path(original_filename_str.replace('\\', '/'))
-            parts = p.parts
-            if len(parts) > 1 and parts[0] == parts[1]:
-                corrected_path = Path(*parts[1:])
-                corrected_path_str = corrected_path.as_posix()
-                self.log("warning",
-                         f"FIXED DUPLICATE PATH: Corrected '{original_filename_str}' to '{corrected_path_str}'")
-                file_entry['filename'] = corrected_path_str
-            sanitized_files.append(file_entry)
-        plan['files'] = sanitized_files
-        return plan
-
-    async def _create_package_structure(self, files: list):
-        if not self.project_manager.active_project_path:
-            return
-
-        is_python_project = any(f['filename'].endswith('.py') for f in files)
-        if not is_python_project:
-            self.log("info", "Non-Python project detected. Skipping __init__.py creation.")
-            return
-
-        dirs_that_need_init = {str(Path(f['filename']).parent) for f in files if
-                               '/' in f['filename'] or '\\' in f['filename']}
-        init_files_to_create = {}
-        for d_str in dirs_that_need_init:
-            d = Path(d_str)
-            if d.name == '.' or not d_str: continue
-            init_path = d / "__init__.py"
-            is_planned = any(f['filename'] == init_path.as_posix() for f in files)
-            exists_on_disk = (self.project_manager.active_project_path / init_path).exists()
-            if not is_planned and not exists_on_disk:
-                init_files_to_create[init_path.as_posix()] = "# This file makes this a Python package\n"
-
-        if init_files_to_create:
-            self.log("info", f"Creating missing __init__.py files: {list(init_files_to_create.keys())}")
-            self.project_manager.save_and_commit_files(init_files_to_create, "chore: add package markers")
-            await asyncio.sleep(0.1)
-
     def _parse_json_response(self, response: str) -> dict:
+        """
+        Extracts a JSON object from a string, even if it's embedded in other text.
+
+        Args:
+            response: The string response from the LLM.
+
+        Returns:
+            The parsed dictionary from the JSON object.
+
+        Raises:
+            ValueError: If no JSON object is found or if decoding fails.
+        """
         match = re.search(r'\{.*\}', response, re.DOTALL)
         if not match:
             self.log("error", "No JSON object found in response.", response)
@@ -400,9 +245,25 @@ class ArchitectService:
             raise ValueError(f"Failed to decode JSON. Error: {e}.")
 
     def handle_error(self, agent: str, error_msg: str, response: str = ""):
+        """
+        Logs an error and emits an event to notify the user.
+
+        Args:
+            agent: The name of the agent or process that failed.
+            error_msg: The error message.
+            response: The raw LLM response, if available.
+        """
         self.log("error", f"{agent} failed: {error_msg}\nResponse: {response}")
         self.event_bus.emit("ai_response_ready", f"Sorry, the {agent} failed.")
 
     def log(self, level: str, message: str, details: str = ""):
+        """
+        Emits a log message through the application's event bus.
+
+        Args:
+            level: The log level (e.g., 'info', 'error').
+            message: The main log message.
+            details: Optional additional details.
+        """
         full_message = f"{message}\nDetails: {details}" if details else message
         self.event_bus.emit("log_message_received", "ArchitectService", level, full_message)

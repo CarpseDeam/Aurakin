@@ -36,9 +36,9 @@ class EditorTabManager:
         self.event_bus.subscribe("items_moved", self._handle_items_moved)
         self.event_bus.subscribe("items_added", self._handle_items_added)
         # --- NEW: Surgical Edit Animation Events ---
-        self.event_bus.subscribe("animate_line_highlight", self._handle_animate_line_highlight)
-        self.event_bus.subscribe("animate_text_deletion", self._handle_animate_text_deletion)
-        self.event_bus.subscribe("animate_stream_insert", self._handle_animate_stream_insert)
+        self.event_bus.subscribe("highlight_lines_for_edit", self._handle_highlight_lines)
+        self.event_bus.subscribe("delete_highlighted_lines", self._handle_delete_lines)
+        self.event_bus.subscribe("position_cursor_for_insert", self._handle_position_cursor)
 
     def _setup_initial_state(self):
         self.clear_all_tabs()
@@ -134,8 +134,6 @@ class EditorTabManager:
             cursor = editor.textCursor()
             cursor.movePosition(QTextCursor.MoveOperation.End)
             cursor.insertText(chunk)
-            # This is the key change: ensure the vertical scrollbar is at the bottom
-            # after inserting text for a smooth "streaming" feel.
             editor.verticalScrollBar().setValue(editor.verticalScrollBar().maximum())
 
     def focus_tab(self, abs_path_str: str):
@@ -188,9 +186,7 @@ class EditorTabManager:
             self._add_welcome_tab("All tabs closed. Open a file or generate code.")
 
     def save_file(self, abs_path_str: str) -> bool:
-        if abs_path_str not in self.editors:
-            print(f"[EditorTabManager] Cannot save: No editor for {abs_path_str}")
-            return False
+        if abs_path_str not in self.editors: return False
         editor = self.editors[abs_path_str]
         try:
             file_path = Path(abs_path_str)
@@ -199,13 +195,11 @@ class EditorTabManager:
             file_path.write_text(content, encoding='utf-8')
             editor.mark_clean()
             self._update_tab_title(abs_path_str)
-            print(f"[EditorTabManager] Saved file: {file_path.name}")
             if self.project_manager and self.project_manager.active_project_path:
                 rel_path = file_path.relative_to(self.project_manager.active_project_path).as_posix()
                 self.project_manager.stage_file(rel_path)
             return True
         except Exception as e:
-            print(f"[EditorTabManager] Error saving file {abs_path_str}: {e}")
             self._show_save_error(Path(abs_path_str).name, str(e))
             return False
 
@@ -227,9 +221,6 @@ class EditorTabManager:
     def has_unsaved_changes(self) -> bool:
         return any(editor.is_dirty() for editor in self.editors.values())
 
-    def get_unsaved_files(self) -> list[str]:
-        return [abs_path_str for abs_path_str, editor in self.editors.items() if editor.is_dirty()]
-
     def _update_tab_title(self, abs_path_str: str):
         if abs_path_str not in self.editors: return
         editor = self.editors[abs_path_str]
@@ -243,177 +234,80 @@ class EditorTabManager:
     def _show_save_error(self, filename: str, error: str):
         QMessageBox.critical(self.tab_widget, "Save Error", f"Could not save '{filename}'\nError: {error}")
 
-    def highlight_error(self, file_path_str: str, line_number: int):
-        try:
-            file_to_highlight = Path(file_path_str).resolve()
-            if not file_to_highlight.is_file():
-                print(f"[EditorTabManager] Error: Cannot highlight non-existent file: {file_to_highlight}")
-                return
-            abs_path_str = str(file_to_highlight)
-            if abs_path_str not in self.editors:
-                self.open_file_in_tab(file_to_highlight)
-            if abs_path_str in self.editors:
-                self.editors[abs_path_str].highlight_error_line(line_number)
-                self.focus_tab(abs_path_str)
-                print(f"[EditorTabManager] Highlighted error on line {line_number} in {abs_path_str}")
-            else:
-                print(f"[EditorTabManager] Failed to open or find editor for highlighting: {abs_path_str}")
-        except Exception as e:
-            print(f"[EditorTabManager] Unexpected error during error highlighting: {e}")
-
-    def clear_all_error_highlights(self):
-        for editor in self.editors.values():
-            editor.clear_error_highlight()
-
     def handle_diagnostics(self, uri: str, diagnostics: List[Dict[str, Any]]):
-        """Receives diagnostics from the LSP and applies them to the correct editor."""
         try:
             file_path = Path(uri.replace("file:///", "").replace("%3A", ":")).resolve()
             abs_path_str = str(file_path)
-
             if abs_path_str in self.editors:
-                editor = self.editors[abs_path_str]
-                editor.set_diagnostics(diagnostics)
+                self.editors[abs_path_str].set_diagnostics(diagnostics)
         except Exception as e:
             print(f"[EditorTabManager] Error handling diagnostics for {uri}: {e}")
-
-    def _get_editor_for_rel_path(self, rel_path_str: str) -> Optional[EnhancedCodeEditor]:
-        """
-        Helper to get an editor instance from a relative project path and focus its tab.
-
-        Args:
-            rel_path_str: The relative path of the file within the project.
-
-        Returns:
-            The EnhancedCodeEditor instance if found, otherwise None.
-        """
+            
+    def _get_editor_for_filename(self, filename: str) -> Optional[EnhancedCodeEditor]:
         if not self.project_manager or not self.project_manager.active_project_path:
-            print("[EditorTabManager] Cannot get editor: No active project.")
             return None
-
-        abs_path_str = str((self.project_manager.active_project_path / rel_path_str).resolve())
-
+        abs_path_str = str((self.project_manager.active_project_path / filename).resolve())
         editor = self.editors.get(abs_path_str)
         if editor:
             self.focus_tab(abs_path_str)
-        else:
-            print(f"[EditorTabManager] Animation event for non-open file: {rel_path_str}. Editor not found.")
         return editor
 
-    def _handle_animate_line_highlight(self, rel_path_str: str, start_line: int, end_line: int):
-        """Handles event to animate highlighting a range of lines."""
-        print(f"[EditorTabManager] Received animate_line_highlight for {rel_path_str}, lines {start_line}-{end_line}")
-        editor = self._get_editor_for_rel_path(rel_path_str)
-        if editor and hasattr(editor, 'animate_line_highlight'):
-            editor.animate_line_highlight(start_line, end_line)
+    def _handle_highlight_lines(self, filename: str, start_line: int, end_line: int):
+        editor = self._get_editor_for_filename(filename)
+        if editor:
+            editor.highlight_line_range(start_line, end_line)
 
-    def _handle_animate_text_deletion(self, rel_path_str: str, start_line: int, start_col: int, end_line: int, end_col: int):
-        """Handles event to animate deleting a block of text."""
-        print(f"[EditorTabManager] Received animate_text_deletion for {rel_path_str}")
-        editor = self._get_editor_for_rel_path(rel_path_str)
-        if editor and hasattr(editor, 'animate_text_deletion'):
-            editor.animate_text_deletion(start_line, start_col, end_line, end_col)
+    def _handle_delete_lines(self, filename: str):
+        editor = self._get_editor_for_filename(filename)
+        if editor:
+            editor.delete_highlighted_range()
 
-    def _handle_animate_stream_insert(self, rel_path_str: str, line: int, col: int, chunk: str):
-        """Handles event to animate streaming text at a specific cursor position."""
-        print(f"[EditorTabManager] Received animate_stream_insert for {rel_path_str}")
-        editor = self._get_editor_for_rel_path(rel_path_str)
-        if editor and hasattr(editor, 'animate_stream_insert'):
-            editor.animate_stream_insert(line, col, chunk)
+    def _handle_position_cursor(self, filename: str, line: int, col: int):
+        editor = self._get_editor_for_filename(filename)
+        if editor:
+            editor.set_cursor_position(line, col)
 
     def _handle_file_renamed(self, old_rel_path_str: str, new_rel_path_str: str):
-        if not self.project_manager or not self.project_manager.active_project_path:
-            return
-
+        if not self.project_manager or not self.project_manager.active_project_path: return
         old_abs_path_str = str((self.project_manager.active_project_path / old_rel_path_str).resolve())
         new_abs_path_str = str((self.project_manager.active_project_path / new_rel_path_str).resolve())
-
         if old_abs_path_str in self.editors:
             editor = self.editors.pop(old_abs_path_str)
             self.editors[new_abs_path_str] = editor
-
             for i in range(self.tab_widget.count()):
                 if self.tab_widget.tabToolTip(i) == old_abs_path_str:
                     new_tab_name = Path(new_abs_path_str).name
                     self.tab_widget.setTabText(i, new_tab_name + ("*" if editor.is_dirty() else ""))
                     self.tab_widget.setTabToolTip(i, new_abs_path_str)
-                    print(f"[EditorTabManager] Updated tab for renamed file: {old_rel_path_str} -> {new_rel_path_str}")
                     break
 
     def _handle_items_deleted(self, deleted_rel_paths: List[str]):
-        if not self.project_manager or not self.project_manager.active_project_path:
-            return
-
-        abs_paths_to_check_for_closing = set()
-        for rel_path_str in deleted_rel_paths:
-            abs_path = (self.project_manager.active_project_path / rel_path_str).resolve()
-            abs_paths_to_check_for_closing.add(str(abs_path))
-            if abs_path.is_dir():
-                for open_abs_path_str in list(self.editors.keys()):
-                    if Path(open_abs_path_str).is_relative_to(abs_path):
-                        abs_paths_to_check_for_closing.add(open_abs_path_str)
-
-        tabs_to_close_indices = []
+        if not self.project_manager or not self.project_manager.active_project_path: return
+        abs_paths_to_check = {str((self.project_manager.active_project_path / p).resolve()) for p in deleted_rel_paths}
+        tabs_to_close = []
         for i in range(self.tab_widget.count()):
-            tab_tooltip_path = self.tab_widget.tabToolTip(i)
-            if tab_tooltip_path in abs_paths_to_check_for_closing:
-                tabs_to_close_indices.append(i)
-
-        for i in sorted(tabs_to_close_indices, reverse=True):
-            rel_path_of_closed_tab = Path(self.tab_widget.tabToolTip(i)).relative_to(
-                self.project_manager.active_project_path).as_posix()
+            tab_path = self.tab_widget.tabToolTip(i)
+            if tab_path in abs_paths_to_check:
+                tabs_to_close.append(i)
+        for i in sorted(tabs_to_close, reverse=True):
             self.close_tab(i, force_close=True)
-            print(f"[EditorTabManager] Closed tab for deleted item: {rel_path_of_closed_tab}")
 
     def _handle_items_moved(self, moved_item_infos: List[Dict[str, str]]):
-        if not self.project_manager or not self.project_manager.active_project_path:
-            return
-
-        for move_info in moved_item_infos:
-            old_rel_path = move_info.get("old")
-            new_rel_path = move_info.get("new")
-            if not old_rel_path or not new_rel_path:
-                continue
-
-            old_abs_path_str = str((self.project_manager.active_project_path / old_rel_path).resolve())
-            new_abs_path_str = str((self.project_manager.active_project_path / new_rel_path).resolve())
-
-            if old_abs_path_str in self.editors:
-                editor = self.editors.pop(old_abs_path_str)
-                self.editors[new_abs_path_str] = editor
+        if not self.project_manager or not self.project_manager.active_project_path: return
+        for info in moved_item_infos:
+            old_abs = str((self.project_manager.active_project_path / info['old']).resolve())
+            new_abs = str((self.project_manager.active_project_path / info['new']).resolve())
+            if old_abs in self.editors:
+                editor = self.editors.pop(old_abs)
+                self.editors[new_abs] = editor
                 for i in range(self.tab_widget.count()):
-                    if self.tab_widget.tabToolTip(i) == old_abs_path_str:
-                        new_tab_name = Path(new_abs_path_str).name
-                        self.tab_widget.setTabText(i, new_tab_name + ("*" if editor.is_dirty() else ""))
-                        self.tab_widget.setTabToolTip(i, new_abs_path_str)
-                        print(f"[EditorTabManager] Updated tab for moved file: {old_rel_path} -> {new_rel_path}")
+                    if self.tab_widget.tabToolTip(i) == old_abs:
+                        self.tab_widget.setTabText(i, Path(new_abs).name + ("*" if editor.is_dirty() else ""))
+                        self.tab_widget.setTabToolTip(i, new_abs)
                         break
-            else:
-                for open_abs_path_str in list(self.editors.keys()):
-                    open_path_obj = Path(open_abs_path_str)
-                    old_dir_abs_path_obj = Path(old_abs_path_str)
-
-                    if old_dir_abs_path_obj.is_dir() and open_path_obj.is_relative_to(old_dir_abs_path_obj):
-                        relative_to_moved_dir = open_path_obj.relative_to(old_dir_abs_path_obj)
-                        new_file_abs_path_str = str((Path(new_abs_path_str) / relative_to_moved_dir).resolve())
-
-                        editor = self.editors.pop(open_abs_path_str)
-                        self.editors[new_file_abs_path_str] = editor
-                        for i in range(self.tab_widget.count()):
-                            if self.tab_widget.tabToolTip(i) == open_abs_path_str:
-                                new_tab_name = Path(new_file_abs_path_str).name
-                                self.tab_widget.setTabText(i, new_tab_name + ("*" if editor.is_dirty() else ""))
-                                self.tab_widget.setTabToolTip(i, new_file_abs_path_str)
-                                print(
-                                    f"[EditorTabManager] Updated tab for file within moved directory: {open_abs_path_str} -> {new_file_abs_path_str}")
-                                break
 
     def _handle_items_added(self, added_item_infos: List[Dict[str, str]]):
-        if not self.project_manager or not self.project_manager.active_project_path:
-            return
-
-        for add_info in added_item_infos:
-            new_rel_path = add_info.get("new_project_rel_path")
-            if new_rel_path:
-                new_abs_path = (self.project_manager.active_project_path / new_rel_path).resolve()
-                print(f"[EditorTabManager] File added to project: {new_rel_path}. Absolute: {new_abs_path}")
+        if not self.project_manager or not self.project_manager.active_project_path: return
+        for info in added_item_infos:
+            abs_path = str((self.project_manager.active_project_path / info['new_project_rel_path']).resolve())
+            self.open_file_in_tab(Path(abs_path))

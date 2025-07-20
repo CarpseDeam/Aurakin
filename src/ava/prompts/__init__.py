@@ -7,24 +7,25 @@
 from .architect import HIERARCHICAL_PLANNER_PROMPT, MODIFICATION_PLANNER_PROMPT
 from .coder import CODER_PROMPT, SURGICAL_MODIFICATION_PROMPT, SIMPLE_FILE_PROMPT
 from .creative import CREATIVE_ASSISTANT_PROMPT, AURA_REFINEMENT_PROMPT
-from .scaffolder import SCAFFOLDER_PROMPT
-from .surgeon import SURGICAL_CODER_PROMPT
+from .planner import TASK_PLANNER_PROMPT
+from .reviewer import REVIEWER_PROMPT
 
 
 __all__ = [
-    # Architect Prompts
+    # Architect & Planner Prompts
     'HIERARCHICAL_PLANNER_PROMPT',
     'MODIFICATION_PLANNER_PROMPT',
-    'SCAFFOLDER_PROMPT',
+    'TASK_PLANNER_PROMPT',
 
     # Coder Prompts
     'CODER_PROMPT',
     'SURGICAL_MODIFICATION_PROMPT',
     'SIMPLE_FILE_PROMPT',
-    'SURGICAL_CODER_PROMPT',
-
 
     # Creative Assistant Prompt
     'CREATIVE_ASSISTANT_PROMPT',
     'AURA_REFINEMENT_PROMPT',
+
+    # Reviewer Prompt
+    'REVIEWER_PROMPT',
 ]
