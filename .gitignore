@@ -1,0 +1,95 @@
+# --- Python Virtual Environments ---
+# Standard names for virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# --- Python Caches & Artifacts ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# --- Build & Distribution Artifacts ---
+# Directories created by setup.py, cx_Freeze, etc.
+build/
+dist/
+sdist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+var/
+wheels/
+share/python-wheels/
+MANIFEST
+
+# Avakin-specific build outputs
+Avakin_Dist/
+final_builds/
+*.zip
+
+# --- IDEs and Editors ---
+# VSCode
+.vscode/
+# PyCharm
+.idea/
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+# Atom
+.atom/
+# Emacs
+*~
+# Vim
+*.swp
+*.swo
+
+# --- Operating System Files ---
+# macOS
+.DS_Store
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+# Linux
+.directory
+
+# --- Application Runtime Data & Logs ---
+# Avakin generated workspace. This is user data and should almost always be ignored.
+workspace/
+
+# All log files
+*.log
+*.log.*
+
+# Project-specific RAG databases (inside the workspace)
+# This is covered by 'workspace/', but can be explicit if needed
+# workspace/*/rag_db/
+
+# --- Local Configuration ---
+# Secrets and local configurations
+.env
+.env.*
+secrets.json
+
+# --- Project Build & Configuration Scripts ---
+# Excluding these as they are part of the build machine setup, not the runtime source.
+/release_helper.py
+/setup_core.py
+/setup_launcher.py
+/setup_rag.py
+/build_dist.py
+/src/ava/config/role_assignments.json
+/src/ava/Monster_Generator_Chat.json
