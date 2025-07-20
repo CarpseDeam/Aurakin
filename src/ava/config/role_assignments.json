@@ -1,0 +1,24 @@
+{
+  "roles": {
+    "architect": {
+      "model": "claude-3-opus-20240229",
+      "temperature": 0.1
+    },
+    "scaffolder": {
+      "model": "claude-3-sonnet-20240229",
+      "temperature": 0.0
+    },
+    "coder": {
+      "model": "claude-3-opus-20240229",
+      "temperature": 0.0
+    },
+    "filler": {
+      "model": "ollama/codellama:13b",
+      "temperature": 0.2
+    },
+    "creative": {
+      "model": "claude-3-sonnet-20240229",
+      "temperature": 0.5
+    }
+  }
+}

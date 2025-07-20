@@ -12,7 +12,8 @@ from src.ava.core.llm_client import LLMClient
 from src.ava.core.project_manager import ProjectManager
 from src.ava.prompts import (
     HIERARCHICAL_PLANNER_PROMPT,
-    MODIFICATION_PLANNER_PROMPT
+    MODIFICATION_PLANNER_PROMPT,
+    SCAFFOLDER_PROMPT
 )
 from src.ava.services.rag_service import RAGService
 from src.ava.services.project_indexer_service import ProjectIndexerService
@@ -98,27 +99,125 @@ class ArchitectService:
     async def _generate_hierarchical_plan(self, prompt: str, rag_context: str) -> dict | None:
         self.log("info", "Designing project structure...")
         plan_prompt = HIERARCHICAL_PLANNER_PROMPT.format(prompt=prompt, rag_context=rag_context)
-        return await self._get_plan_from_llm(plan_prompt)
+        initial_plan = await self._get_plan_from_llm(plan_prompt)
+
+        if not initial_plan:
+            return None
+
+        self.log("info", "Initial plan created. Now scaffolding files...")
+        augmented_plan = await self._scaffold_plan_files(initial_plan, rag_context, existing_files=None)
+        return augmented_plan
 
     async def _generate_modification_plan(self, prompt: str, existing_files: dict, rag_context: str) -> dict | None:
         self.log("info", "Analyzing existing files to create a modification plan...")
         prompt_template = MODIFICATION_PLANNER_PROMPT
         try:
-            # THE FIX: Provide the full, unfiltered code context to the planner.
             full_code_context_json = json.dumps(existing_files, indent=2)
             enhanced_prompt_for_llm = f"{prompt}\n\nADDITIONAL CONTEXT FROM KNOWLEDGE BASE:\n{rag_context}"
             plan_prompt = prompt_template.format(
                 prompt=enhanced_prompt_for_llm,
                 full_code_context=full_code_context_json
             )
-            plan = await self._get_plan_from_llm(plan_prompt)
-            if plan:
-                plan = self._sanitize_plan_paths(plan)
-            return plan
+            initial_plan = await self._get_plan_from_llm(plan_prompt)
+            if initial_plan:
+                initial_plan = self._sanitize_plan_paths(initial_plan)
+            else:
+                return None
+
+            self.log("info", "Initial modification plan created. Now scaffolding files...")
+            augmented_plan = await self._scaffold_plan_files(initial_plan, rag_context, existing_files=existing_files)
+            return augmented_plan
         except Exception as e:
             self.handle_error("architect", f"An unexpected error during modification planning: {e}")
             import traceback
             traceback.print_exc()
+            return None
+
+    async def _scaffold_plan_files(self, initial_plan: dict, rag_context: str,
+                                   existing_files: Optional[Dict[str, str]]) -> dict | None:
+        if not initial_plan or not initial_plan.get("files"):
+            return None
+
+        total_files = len(initial_plan["files"])
+        self.log("info", f"Scaffolding {total_files} file(s)...")
+
+        tasks = [
+            self._scaffold_single_file(file_info, initial_plan, rag_context, existing_files, i + 1, total_files)
+            for i, file_info in enumerate(initial_plan["files"])
+        ]
+        scaffolded_results = await asyncio.gather(*tasks)
+
+        augmented_files = []
+        for result in scaffolded_results:
+            if result:
+                augmented_files.append(result)
+            else:
+                self.log("error", "A file failed to scaffold. Aborting plan.")
+                return None
+
+        initial_plan["files"] = augmented_files
+        return initial_plan
+
+    async def _scaffold_single_file(self, file_info: Dict[str, str], full_plan: Dict, rag_context: str,
+                                    existing_files: Optional[Dict[str, str]], current_num: int,
+                                    total_num: int) -> Optional[Dict[str, str]]:
+        filename = file_info["filename"]
+        self.log("info", f"({current_num}/{total_num}) Scaffolding {filename}...")
+        self.event_bus.emit("agent_status_changed", "Scaffolder", f"Scaffolding {filename}...", "fa5s.drafting-compass")
+
+        is_modification = existing_files is not None and filename in existing_files
+        original_code_section = ""
+        if is_modification:
+            original_code = existing_files.get(filename, "")
+            original_code_section = f"\n---\n**ORIGINAL CODE OF `{filename}` (You are modifying this file):**\n```python\n{original_code}\n```"
+
+        symbol_index = {}
+        if existing_files:
+            for rel_path, content in existing_files.items():
+                if rel_path.endswith(".py"):
+                    module_path_str = rel_path.replace('.py', '').replace('/', '.')
+                    symbols_in_file = self.project_indexer.get_symbols_from_content(content, module_path_str)
+                    symbol_index.update(symbols_in_file)
+
+        code_context = existing_files.copy() if existing_files else {}
+        if filename in code_context:
+            del code_context[filename]
+
+        scaffold_prompt = SCAFFOLDER_PROMPT.format(
+            filename=filename,
+            purpose=file_info.get("purpose", ""),
+            original_code_section=original_code_section,
+            file_plan_json=json.dumps(full_plan, indent=2),
+            symbol_index_json=json.dumps(symbol_index, indent=2),
+            code_context_json=json.dumps(code_context, indent=2),
+        )
+
+        provider, model = self.llm_client.get_model_for_role("scaffolder")
+        if not provider or not model:
+            self.handle_error("scaffolder", "No model configured for scaffolder role.")
+            return None
+
+        raw_scaffold_response = ""
+        try:
+            async for chunk in self.llm_client.stream_chat(provider, model, scaffold_prompt, "scaffolder"):
+                raw_scaffold_response += chunk
+
+            scaffold_json = self._parse_json_response(raw_scaffold_response)
+            scaffold_code = scaffold_json.get("scaffold_code")
+
+            if not scaffold_code or not isinstance(scaffold_code, str):
+                self.log("error", "Scaffolder AI's response was invalid or missing 'scaffold_code'.",
+                         raw_scaffold_response)
+                raise ValueError("AI did not return valid scaffold_code in JSON format.")
+
+            file_info["scaffold_code"] = scaffold_code
+            return file_info
+        except (json.JSONDecodeError, ValueError) as e:
+            self.handle_error("scaffolder", f"Scaffold creation failed for {filename}: {e}", raw_scaffold_response)
+            return None
+        except Exception as e:
+            self.handle_error("scaffolder", f"An unexpected error during scaffolding for {filename}: {e}",
+                              raw_scaffold_response)
             return None
 
     async def _get_plan_from_llm(self, plan_prompt: str) -> dict | None:
@@ -157,7 +256,8 @@ class ArchitectService:
             await self._create_package_structure(files_to_generate)
             await asyncio.sleep(0.1)
             self.log("info", "Handing off to unified Generation Coordinator...")
-            generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context, existing_files)
+            generated_files = await self.generation_coordinator.coordinate_generation(plan, rag_context,
+                                                                                      existing_files)
             if not generated_files:
                 self.log("error", "Generation coordinator returned no files.")
                 return False
@@ -216,7 +316,6 @@ class ArchitectService:
             self.log("info", f"Creating missing __init__.py files: {list(init_files_to_create.keys())}")
             self.project_manager.save_and_commit_files(init_files_to_create, "chore: add package markers")
             await asyncio.sleep(0.1)
-
 
     def _parse_json_response(self, response: str) -> dict:
         match = re.search(r'\{.*\}', response, re.DOTALL)

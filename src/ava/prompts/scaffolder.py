@@ -5,13 +5,34 @@ from .master_rules import JSON_OUTPUT_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE
 SCAFFOLDER_PROMPT = textwrap.dedent(f"""
     You are a master software architect. Your role is to create the high-level "scaffold" for a Python file. You will not write the full implementation. Instead, you will create a skeleton of the file with detailed, numbered comments instructing a junior developer (a local AI model) on how to complete the code.
 
-    **USER REQUEST:** "{{prompt}}"
-    **FILE TO SCAFFOLD:** `{{filename}}`
+    **YOUR ASSIGNED FILE:** `{{filename}}`
     **ARCHITECT'S PURPOSE FOR THIS FILE:** `{{purpose}}`
-    **FULL PROJECT PLAN:**
-    ```json
-    {{file_plan_json}}
-    ```
+    {{original_code_section}}
+
+    ---
+    **CONTEXT & UNBREAKABLE LAWS**
+
+    **LAW #1: THE PLAN IS ABSOLUTE.**
+    You do not have the authority to change the plan. You must work within its constraints.
+    - **Project File Manifest:** This is the complete list of all files that exist or will exist in the project. It is your only map of the codebase.
+      ```json
+      {{file_plan_json}}
+      ```
+    - **Full Code of Other Project Files:** This is the complete source code for other files in the project. Use this code as the absolute source of truth for how to integrate with them.
+      ```json
+      {{code_context_json}}
+      ```
+    - **Project Symbol Index:** This is a list of all classes and functions available for import from other project files.
+      ```json
+      {{symbol_index_json}}
+      ```
+
+    **LAW #2: DO NOT INVENT IMPORTS.**
+    - You can **ONLY** import from three sources:
+        1. Standard Python libraries (e.g., `os`, `sys`, `json`).
+        2. External packages explicitly listed as dependencies in the project plan.
+        3. Other project files that are present in the **Project Symbol Index** and for which you have the full code in the **Full Code of Other Project Files** section.
+    - If a file or class is NOT in your provided context, it **DOES NOT EXIST**. You are forbidden from importing it.
 
     **SCAFFOLDING DIRECTIVES (UNBREAKABLE LAWS):**
 
