@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING, Dict, List, Optional
 
@@ -27,6 +28,31 @@ from src.ava.utils.code_summarizer import CodeSummarizer
 
 if TYPE_CHECKING:
     from src.ava.core.managers import ServiceManager
+
+
+INSTRUCTION_GENERATOR_PROMPT = textwrap.dedent("""
+    You are an AI assistant that translates a high-level purpose into a specific, actionable, natural-language instruction for a coding AI.
+
+    **CONTEXT:**
+    - **File to Modify:** `{filename}`
+    - **High-Level Purpose:** `{purpose}`
+    - **Original Code:**
+    ```python
+    {original_code}
+    ```
+
+    **TASK:**
+    Based on the purpose and the original code, generate a single, concise `surgical_instruction`. This instruction should be an imperative command telling another AI exactly what to change in the code. The instruction should be detailed enough that the coding AI can generate a diff/patch from it.
+
+    **EXAMPLE:**
+    - **Purpose:** "Add error handling for division by zero."
+    - **Instruction:** "In the 'divide' function, add a check to see if the denominator 'b' is zero. If it is, raise a ValueError with a descriptive message."
+
+    **OUTPUT FORMAT:**
+    Your response MUST be ONLY the raw text of the surgical instruction. Do not add any conversational text, explanations, or markdown.
+
+    Generate the surgical instruction now.
+""")
 
 
 class ArchitectService:
@@ -125,7 +151,7 @@ class ArchitectService:
             else:
                 return None
 
-            self.log("info", "Initial modification plan created. Now scaffolding files...")
+            self.log("info", "Initial modification plan created. Now augmenting plan...")
             augmented_plan = await self._scaffold_plan_files(initial_plan, rag_context, existing_files=existing_files)
             return augmented_plan
         except Exception as e:
@@ -140,24 +166,65 @@ class ArchitectService:
             return None
 
         total_files = len(initial_plan["files"])
-        self.log("info", f"Scaffolding {total_files} file(s)...")
+        self.log("info", f"Augmenting plan for {total_files} file(s)...")
 
-        tasks = [
-            self._scaffold_single_file(file_info, initial_plan, rag_context, existing_files, i + 1, total_files)
-            for i, file_info in enumerate(initial_plan["files"])
-        ]
-        scaffolded_results = await asyncio.gather(*tasks)
+        tasks = []
+        for i, file_info in enumerate(initial_plan["files"]):
+            is_modification = existing_files is not None and file_info["filename"] in existing_files
+            if is_modification:
+                original_code = existing_files.get(file_info["filename"], "")
+                tasks.append(self._generate_surgical_instruction_for_file(file_info, original_code))
+            else:
+                tasks.append(self._scaffold_single_file(file_info, initial_plan, rag_context, existing_files, i + 1, total_files))
+
+        augmented_results = await asyncio.gather(*tasks)
 
         augmented_files = []
-        for result in scaffolded_results:
+        for result in augmented_results:
             if result:
                 augmented_files.append(result)
             else:
-                self.log("error", "A file failed to scaffold. Aborting plan.")
+                self.log("error", "A file failed to be processed during plan augmentation. Aborting plan.")
                 return None
 
         initial_plan["files"] = augmented_files
         return initial_plan
+
+    async def _generate_surgical_instruction_for_file(self, file_info: Dict[str, str], original_code: str) -> Optional[Dict[str, str]]:
+        filename = file_info["filename"]
+        purpose = file_info.get("purpose", "Modify the file as per the user's request.")
+
+        self.log("info", f"Generating surgical instruction for {filename}...")
+        self.event_bus.emit("agent_status_changed", "Architect", f"Detailing changes for {filename}...", "fa5s.tasks")
+
+        prompt = INSTRUCTION_GENERATOR_PROMPT.format(
+            filename=filename,
+            purpose=purpose,
+            original_code=original_code
+        )
+
+        provider, model = self.llm_client.get_model_for_role("architect")
+        if not provider or not model:
+            self.handle_error("architect", "No model configured for architect role.")
+            file_info["surgical_instruction"] = purpose
+            return file_info
+
+        instruction = ""
+        raw_response = ""
+        try:
+            async for chunk in self.llm_client.stream_chat(provider, model, prompt, "architect"):
+                raw_response += chunk
+
+            instruction = raw_response.strip()
+            if not instruction:
+                raise ValueError("LLM returned an empty instruction.")
+
+            file_info["surgical_instruction"] = instruction
+            return file_info
+        except Exception as e:
+            self.handle_error("architect", f"Failed to generate surgical instruction for {filename}: {e}", raw_response)
+            file_info["surgical_instruction"] = purpose
+            return file_info
 
     async def _scaffold_single_file(self, file_info: Dict[str, str], full_plan: Dict, rag_context: str,
                                     existing_files: Optional[Dict[str, str]], current_num: int,

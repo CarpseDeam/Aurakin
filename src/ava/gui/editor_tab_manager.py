@@ -35,6 +35,10 @@ class EditorTabManager:
         self.event_bus.subscribe("items_deleted", self._handle_items_deleted)
         self.event_bus.subscribe("items_moved", self._handle_items_moved)
         self.event_bus.subscribe("items_added", self._handle_items_added)
+        # --- NEW: Surgical Edit Animation Events ---
+        self.event_bus.subscribe("animate_line_highlight", self._handle_animate_line_highlight)
+        self.event_bus.subscribe("animate_text_deletion", self._handle_animate_text_deletion)
+        self.event_bus.subscribe("animate_stream_insert", self._handle_animate_stream_insert)
 
     def _setup_initial_state(self):
         self.clear_all_tabs()
@@ -272,6 +276,50 @@ class EditorTabManager:
                 editor.set_diagnostics(diagnostics)
         except Exception as e:
             print(f"[EditorTabManager] Error handling diagnostics for {uri}: {e}")
+
+    def _get_editor_for_rel_path(self, rel_path_str: str) -> Optional[EnhancedCodeEditor]:
+        """
+        Helper to get an editor instance from a relative project path and focus its tab.
+
+        Args:
+            rel_path_str: The relative path of the file within the project.
+
+        Returns:
+            The EnhancedCodeEditor instance if found, otherwise None.
+        """
+        if not self.project_manager or not self.project_manager.active_project_path:
+            print("[EditorTabManager] Cannot get editor: No active project.")
+            return None
+
+        abs_path_str = str((self.project_manager.active_project_path / rel_path_str).resolve())
+
+        editor = self.editors.get(abs_path_str)
+        if editor:
+            self.focus_tab(abs_path_str)
+        else:
+            print(f"[EditorTabManager] Animation event for non-open file: {rel_path_str}. Editor not found.")
+        return editor
+
+    def _handle_animate_line_highlight(self, rel_path_str: str, start_line: int, end_line: int):
+        """Handles event to animate highlighting a range of lines."""
+        print(f"[EditorTabManager] Received animate_line_highlight for {rel_path_str}, lines {start_line}-{end_line}")
+        editor = self._get_editor_for_rel_path(rel_path_str)
+        if editor and hasattr(editor, 'animate_line_highlight'):
+            editor.animate_line_highlight(start_line, end_line)
+
+    def _handle_animate_text_deletion(self, rel_path_str: str, start_line: int, start_col: int, end_line: int, end_col: int):
+        """Handles event to animate deleting a block of text."""
+        print(f"[EditorTabManager] Received animate_text_deletion for {rel_path_str}")
+        editor = self._get_editor_for_rel_path(rel_path_str)
+        if editor and hasattr(editor, 'animate_text_deletion'):
+            editor.animate_text_deletion(start_line, start_col, end_line, end_col)
+
+    def _handle_animate_stream_insert(self, rel_path_str: str, line: int, col: int, chunk: str):
+        """Handles event to animate streaming text at a specific cursor position."""
+        print(f"[EditorTabManager] Received animate_stream_insert for {rel_path_str}")
+        editor = self._get_editor_for_rel_path(rel_path_str)
+        if editor and hasattr(editor, 'animate_stream_insert'):
+            editor.animate_stream_insert(line, col, chunk)
 
     def _handle_file_renamed(self, old_rel_path_str: str, new_rel_path_str: str):
         if not self.project_manager or not self.project_manager.active_project_path:

@@ -8,6 +8,7 @@ from .architect import HIERARCHICAL_PLANNER_PROMPT, MODIFICATION_PLANNER_PROMPT
 from .coder import CODER_PROMPT, SURGICAL_MODIFICATION_PROMPT, SIMPLE_FILE_PROMPT
 from .creative import CREATIVE_ASSISTANT_PROMPT, AURA_REFINEMENT_PROMPT
 from .scaffolder import SCAFFOLDER_PROMPT
+from .surgeon import SURGICAL_CODER_PROMPT
 
 
 __all__ = [
@@ -20,6 +21,7 @@ __all__ = [
     'CODER_PROMPT',
     'SURGICAL_MODIFICATION_PROMPT',
     'SIMPLE_FILE_PROMPT',
+    'SURGICAL_CODER_PROMPT',
 
 
     # Creative Assistant Prompt

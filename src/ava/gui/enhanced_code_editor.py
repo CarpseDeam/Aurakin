@@ -1,10 +1,13 @@
 # src/ava/gui/enhanced_code_editor.py
+import logging
 from PySide6.QtWidgets import QWidget, QMessageBox, QPlainTextEdit, QTextEdit
 from PySide6.QtCore import Qt, QRect, QSize, Signal
 from PySide6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont, QKeySequence, QShortcut, QTextCharFormat
 from typing import Dict, List, Any
 
 from src.ava.gui.components import Colors, Typography
+
+logger = logging.getLogger(__name__)
 
 
 class LineNumberArea(QWidget):
@@ -39,6 +42,13 @@ class EnhancedCodeEditor(QPlainTextEdit):
         self.error_line_color = Colors.DIFF_ADD_BG
         self.diagnostic_underline_color = Colors.ACCENT_RED
         self.diagnostic_selections: List[QTextEdit.ExtraSelection] = []
+
+        # --- NEW: For surgical edit animations ---
+        self.animation_selections: List[QTextEdit.ExtraSelection] = []
+        self.animation_highlight_color = QColor(Colors.ACCENT_BLUE.name())
+        self.animation_highlight_color.setAlpha(40)  # A subtle, transparent highlight
+        # --- END NEW ---
+
         self.line_number_color = Colors.TEXT_SECONDARY
         self.line_number_bg_color = Colors.SECONDARY_BG
         self._is_dirty = False
@@ -133,6 +143,7 @@ class EnhancedCodeEditor(QPlainTextEdit):
 
     def highlight_current_line(self):
         extra_selections = []
+        extra_selections.extend(self.animation_selections)
         extra_selections.extend(self.diagnostic_selections)
         extra_selections.extend(
             [sel for sel in self.extraSelections() if sel.format.background() == self.error_line_color])
@@ -271,3 +282,80 @@ class EnhancedCodeEditor(QPlainTextEdit):
             else:
                 cursor.insertText('# ')
         cursor.endEditBlock()
+
+    def animate_line_highlight(self, start_line: int, end_line: int):
+        """
+        Highlights a range of lines to indicate a pending change, typically before a deletion.
+
+        Args:
+            start_line: The 1-based starting line number.
+            end_line: The 1-based ending line number.
+        """
+        self.animation_selections.clear()
+        logger.info(f"Highlighting lines {start_line}-{end_line} for animation.")
+
+        for line_num in range(start_line, end_line + 1):
+            selection = QTextEdit.ExtraSelection()
+            selection.format.setBackground(self.animation_highlight_color)
+            selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+
+            block = self.document().findBlockByNumber(line_num - 1)
+            if not block.isValid():
+                logger.warning(f"Invalid block for line number {line_num} in highlight animation.")
+                continue
+
+            cursor = QTextCursor(block)
+            selection.cursor = cursor
+            self.animation_selections.append(selection)
+
+        self.highlight_current_line()
+
+    def animate_text_deletion(self, start_line: int, start_col: int, end_line: int, end_col: int):
+        """
+        Deletes a specific range of text, typically after it has been highlighted.
+
+        Args:
+            start_line: The 1-based starting line number.
+            start_col: The 0-based starting column.
+            end_line: The 1-based ending line number.
+            end_col: The 0-based ending column.
+        """
+        logger.info(f"Deleting text from {start_line}:{start_col} to {end_line}:{end_col}.")
+        cursor = self.textCursor()
+
+        start_block = self.document().findBlockByNumber(start_line - 1)
+        end_block = self.document().findBlockByNumber(end_line - 1)
+
+        if not start_block.isValid() or not end_block.isValid():
+            logger.error("Invalid block found during text deletion animation.")
+            return
+
+        cursor.setPosition(start_block.position() + start_col)
+        cursor.setPosition(end_block.position() + end_col, QTextCursor.MoveMode.KeepAnchor)
+
+        cursor.removeSelectedText()
+
+        # After deletion, clear the highlight and update the view
+        self.animation_selections.clear()
+        self.highlight_current_line()
+
+    def animate_stream_insert(self, line: int, col: int, chunk: str):
+        """
+        Inserts a chunk of text at a specific position for streaming animations.
+
+        Args:
+            line: The 1-based line number for insertion.
+            col: The 0-based column for insertion.
+            chunk: The string of text to insert.
+        """
+        cursor = self.textCursor()
+
+        block = self.document().findBlockByNumber(line - 1)
+        if not block.isValid():
+            logger.error(f"Invalid block for line {line} during stream insert animation.")
+            return
+
+        cursor.setPosition(block.position() + col)
+        cursor.insertText(chunk)
+        self.setTextCursor(cursor)  # Ensure the editor's main cursor is updated
+        self.ensureCursorVisible()

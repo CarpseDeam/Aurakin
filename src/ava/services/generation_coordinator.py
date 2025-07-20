@@ -1,19 +1,21 @@
 # src/ava/services/generation_coordinator.py
 import asyncio
+import io
 import json
 import re
 from typing import Dict, Any, Optional
 import textwrap
 from pathlib import Path
 
+import unidiff
 from src.ava.core.event_bus import EventBus
+from src.ava.prompts import SURGICAL_CODER_PROMPT
 
 
 class GenerationCoordinator:
     """
-    Orchestrates the two-step code generation process: scaffolding and filling.
-    First, it displays the architect's scaffold, then calls a filler model
-    to complete the implementation, streaming the final result to the UI.
+    Orchestrates code generation, routing between scaffold-and-fill for new files
+    and surgical edits for existing files.
     """
 
     def __init__(self, service_manager, event_bus: EventBus, context_manager,
@@ -38,27 +40,26 @@ class GenerationCoordinator:
     async def coordinate_generation(self, plan: Dict[str, Any], rag_context: str,
                                     existing_files: Optional[Dict[str, str]]) -> Dict[str, str]:
         """
-        Coordinates the entire generation process for a set of files based on a plan.
+        Coordinates the entire generation process based on the provided plan.
 
-        This method follows a scaffold-and-fill approach:
-        1. Builds a comprehensive context for the generation session.
-        2. Determines the optimal order for file generation.
-        3. For each file:
-           a. Streams the pre-generated scaffold code to the UI.
-           b. Calls a 'filler' LLM to complete the implementation based on the scaffold.
-           c. Streams the final, complete code to the UI, replacing the scaffold.
-        4. Updates the context after each file is generated to inform subsequent files.
+        This method routes between two main workflows:
+        1.  **Surgical Edit:** For modifying existing files, it generates and applies a unidiff patch.
+        2.  **Scaffold-and-Fill:** For creating new files, it uses a two-step process of scaffolding
+            followed by implementation filling.
+
+        It determines the optimal order for file generation, updates the context after each
+        file is generated to inform subsequent files, and streams all progress to the UI.
 
         Args:
-            plan: The architectural plan from ArchitectService, including scaffold code for each file.
+            plan: The architectural plan from ArchitectService.
             rag_context: Contextual information retrieved from the RAG service.
             existing_files: A dictionary of existing file contents for modification tasks.
 
         Returns:
-            A dictionary mapping filenames to their complete, generated content.
+            A dictionary mapping filenames to their complete, generated/modified content.
         """
         try:
-            self.log("info", "🚀 Starting scaffold-and-fill generation...")
+            self.log("info", "🚀 Starting coordinated generation...")
             context = await self.context_manager.build_generation_context(plan, rag_context, existing_files)
             generation_specs = await self.dependency_planner.plan_generation_order(context)
             generation_order = [spec.filename for spec in generation_specs]
@@ -72,34 +73,53 @@ class GenerationCoordinator:
                     self.log("error", f"Could not find file info for {filename} in plan. Skipping.")
                     continue
 
-                # --- Step 1: Display the Scaffold ---
-                scaffold_code = file_info.get("scaffold_code")
-                if not scaffold_code:
-                    scaffold_code = f"# INFO: No scaffold code provided for {filename}. Generating from scratch."
-                    self.log("warning", f"No scaffold_code found for {filename}. Generating from scratch.")
+                final_content = None
 
-                self.event_bus.emit("agent_status_changed", "Scaffolder", f"Displaying scaffold for {filename}...",
-                                    "fa5s.drafting-compass")
-                await self._stream_content(filename, scaffold_code, clear_first=True)
-                await asyncio.sleep(1.5)  # Let the user see the scaffold
+                # --- Workflow Router ---
+                if 'surgical_instruction' in file_info:
+                    # --- 1. Surgical Edit Workflow ---
+                    self.log("info", f"Performing surgical edit on {filename}...")
+                    self.event_bus.emit("agent_status_changed", "Surgeon", f"Modifying {filename}...", "fa5s.cut")
 
-                # --- Step 2: Fill the Scaffold ---
-                self.event_bus.emit("agent_status_changed", "Filler", f"Implementing {filename}...", "fa5s.fill-drip")
+                    original_content = (existing_files or {}).get(filename)
+                    if original_content is None:
+                        self.log("error", f"Cannot perform surgical edit: original content for {filename} not found.")
+                        final_content = f"# ERROR: Original content for {filename} not found for surgical edit."
+                    else:
+                        await self._stream_content(filename, original_content, clear_first=True)
+                        await asyncio.sleep(1.5)  # Let user see original content
 
-                file_extension = Path(filename).suffix
-                if file_extension == '.py':
-                    # For Python files, call the filler model
-                    filled_content = await self._generate_filled_code(
-                        file_info, context, generated_files_this_session
-                    )
+                        modified_content = await self._perform_surgical_edit(
+                            file_info, context, generated_files_this_session, original_content
+                        )
+                        final_content = modified_content
                 else:
-                    # For non-Python files, the scaffold is the final content
-                    self.log("info", f"Non-Python file '{filename}' detected. Using scaffold as final content.")
-                    filled_content = scaffold_code
+                    # --- 2. Scaffold-and-Fill Workflow ---
+                    self.log("info", f"Performing scaffold-and-fill for {filename}...")
+                    scaffold_code = file_info.get("scaffold_code")
+                    if not scaffold_code:
+                        scaffold_code = f"# INFO: No scaffold code provided for {filename}. Generating from scratch."
+                        self.log("warning", f"No scaffold_code found for {filename}. Generating from scratch.")
 
-                # --- Step 3: Process and Display Final Code ---
-                if filled_content is not None:
-                    cleaned_content = self.robust_clean_llm_output(filled_content)
+                    self.event_bus.emit("agent_status_changed", "Scaffolder", f"Displaying scaffold for {filename}...",
+                                        "fa5s.drafting-compass")
+                    await self._stream_content(filename, scaffold_code, clear_first=True)
+                    await asyncio.sleep(1.5)
+
+                    self.event_bus.emit("agent_status_changed", "Filler", f"Implementing {filename}...", "fa5s.fill-drip")
+                    file_extension = Path(filename).suffix
+                    if file_extension == '.py':
+                        filled_content = await self._generate_filled_code(
+                            file_info, context, generated_files_this_session
+                        )
+                    else:
+                        self.log("info", f"Non-Python file '{filename}' detected. Using scaffold as final content.")
+                        filled_content = scaffold_code
+                    final_content = filled_content
+
+                # --- Common Step: Process and Display Final Code ---
+                if final_content is not None:
+                    cleaned_content = self.robust_clean_llm_output(final_content)
                     await self._stream_content(filename, cleaned_content, clear_first=True)
                     generated_files_this_session[filename] = cleaned_content
                     context = await self.context_manager.update_session_context(context, {filename: cleaned_content})
@@ -113,7 +133,7 @@ class GenerationCoordinator:
                                     {"filename": filename, "completed": i + 1, "total": total_files})
 
             self.log("success",
-                     f"✅ Scaffold-and-fill complete: {len(generated_files_this_session)}/{total_files} files generated.")
+                     f"✅ Coordinated generation complete: {len(generated_files_this_session)}/{total_files} files processed.")
             return generated_files_this_session
 
         except Exception as e:
@@ -132,10 +152,8 @@ class GenerationCoordinator:
             clear_first: If True, clears the editor for the file before streaming.
         """
         if clear_first:
-            # Hack: Use the 'code_generation_complete' event with an empty content
-            # to clear the editor tab for the given file before streaming new content.
             self.event_bus.emit("code_generation_complete", {filename: ""})
-            await asyncio.sleep(0.1)  # Give UI time to process the clear event
+            await asyncio.sleep(0.1)
 
         chunk_size = 50
         for i in range(0, len(content), chunk_size):
@@ -230,6 +248,128 @@ class GenerationCoordinator:
             scaffold_code=scaffold_code,
             code_context_json=json.dumps(full_code_context, indent=2)
         )
+
+    async def _perform_surgical_edit(self, file_info: Dict[str, Any], context: Any,
+                                     generated_files_this_session: Dict[str, str],
+                                     original_content: str) -> str:
+        """
+        Calls a 'surgeon' LLM to generate a unidiff patch and applies it to the original content.
+
+        Args:
+            file_info: Dictionary containing file metadata, including the surgical instruction.
+            context: The current generation context.
+            generated_files_this_session: Files already generated in this session.
+            original_content: The original content of the file to be modified.
+
+        Returns:
+            The modified code as a string, or the original code with an error comment on failure.
+        """
+        filename = file_info["filename"]
+        prompt = self._build_surgeon_prompt(file_info, context, generated_files_this_session, original_content)
+
+        provider, model = self.llm_client.get_model_for_role("coder")
+        if not provider or not model:
+            self.log("error", f"No model for 'coder' role. Cannot perform surgical edit on {filename}.")
+            return f"# SURGICAL EDIT FAILED: No 'coder' model configured.\n\n{original_content}"
+
+        patch_str = ""
+        try:
+            async for chunk in self.llm_client.stream_chat(provider, model, prompt, "coder"):
+                patch_str += chunk
+
+            if not patch_str.strip():
+                self.log("error", f"LLM returned an empty patch for {filename}.")
+                return f"# SURGICAL EDIT FAILED: LLM returned an empty patch.\n\n{original_content}"
+
+            cleaned_patch = self.robust_clean_llm_output(patch_str)
+            patched_content = self._apply_unidiff_patch(original_content, cleaned_patch)
+
+            if patched_content is None:
+                self.log("error", f"Failed to apply patch to {filename}. Patch might be invalid.")
+                return f"# SURGICAL EDIT FAILED: Could not apply generated patch.\n\n{original_content}"
+
+            return patched_content
+        except Exception as e:
+            self.log("error", f"Surgical edit failed for {filename}: {e}")
+            return f"# SURGICAL EDIT FAILED: {e}\n\n{original_content}"
+
+    def _build_surgeon_prompt(self, file_info: Dict[str, Any], context: Any,
+                              generated_files_this_session: Dict[str, str],
+                              original_content: str) -> str:
+        """
+        Constructs the prompt for the 'surgeon' model to generate a diff patch.
+
+        Args:
+            file_info: Dictionary containing file metadata.
+            context: The current generation context.
+            generated_files_this_session: Files already generated in this session.
+            original_content: The original content of the file to be modified.
+
+        Returns:
+            The formatted prompt string.
+        """
+        filename = file_info["filename"]
+        instruction = file_info["surgical_instruction"]
+
+        full_code_context = (context.existing_files or {}).copy()
+        full_code_context.update(generated_files_this_session)
+        if filename in full_code_context:
+            del full_code_context[filename]
+
+        prompt_base = SURGICAL_CODER_PROMPT.format(
+            filename=filename,
+            surgical_instruction=instruction,
+            symbol_index_json=json.dumps(context.project_index, indent=2),
+            code_context_json=json.dumps(full_code_context, indent=2)
+        )
+
+        return f"{prompt_base}\n{original_content}"
+
+    def _apply_unidiff_patch(self, original_content: str, patch_str: str) -> Optional[str]:
+        """
+        Applies a unidiff patch to the original content using the unidiff library.
+
+        Args:
+            original_content: The original string content of the file.
+            patch_str: The unidiff patch as a string.
+
+        Returns:
+            The patched content as a string, or None if the patch cannot be applied.
+        """
+        try:
+            patch = unidiff.PatchSet(io.StringIO(patch_str))
+            if not patch or len(patch) == 0:
+                self.log("error", "Could not parse the patch string into a valid PatchSet.")
+                return None
+
+            patched_file = patch[0]
+            original_lines = original_content.splitlines(keepends=True)
+            patched_content_lines = []
+            original_line_idx = 0
+
+            for hunk in patched_file:
+                while original_line_idx < hunk.source_start - 1:
+                    if original_line_idx < len(original_lines):
+                        patched_content_lines.append(original_lines[original_line_idx])
+                    original_line_idx += 1
+
+                for line in hunk:
+                    if line.is_context:
+                        patched_content_lines.append(line.value)
+                        original_line_idx += 1
+                    elif line.is_added:
+                        patched_content_lines.append(line.value)
+                    elif line.is_removed:
+                        original_line_idx += 1
+
+            while original_line_idx < len(original_lines):
+                patched_content_lines.append(original_lines[original_line_idx])
+                original_line_idx += 1
+
+            return "".join(patched_content_lines)
+        except Exception as e:
+            self.log("error", f"Failed to apply unidiff patch: {e}")
+            return None
 
     def robust_clean_llm_output(self, content: str) -> str:
         """
