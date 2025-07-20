@@ -11,7 +11,6 @@ from src.ava.core.project_manager import ProjectManager
 from src.ava.gui.project_context_manager import ProjectContextManager
 from src.ava.gui.file_tree_manager import FileTreeManager
 from src.ava.gui.editor_tab_manager import EditorTabManager
-from src.ava.gui.integrated_terminal import IntegratedTerminal
 from src.ava.gui.find_replace_dialog import FindReplaceDialog
 from src.ava.gui.quick_file_finder import QuickFileFinder
 from src.ava.gui.status_bar import StatusBar
@@ -31,7 +30,6 @@ class CodeViewerWindow(QMainWindow):
         self.project_context = ProjectContextManager()
         self.editor_manager: EditorTabManager = None
         self.file_tree_manager: FileTreeManager = None
-        self.terminal: IntegratedTerminal = None
 
         self.find_replace_dialog: FindReplaceDialog = None
         self.quick_file_finder: QuickFileFinder = None
@@ -61,27 +59,20 @@ class CodeViewerWindow(QMainWindow):
 
         main_splitter.addWidget(file_tree_panel_widget)
 
-        editor_terminal_splitter = self._create_editor_terminal_splitter()
-        main_splitter.addWidget(editor_terminal_splitter)
-        main_splitter.setSizes([300, 1100])
-        main_layout.addWidget(main_splitter)
-        self.status_bar = StatusBar(self.event_bus)
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready")
-
-    def _create_editor_terminal_splitter(self) -> QSplitter:
-        right_splitter = QSplitter(Qt.Orientation.Vertical)
+        # Create the editor tab widget directly
         tab_widget = QTabWidget()
         tab_widget.setTabsClosable(True)
         tab_widget.setMovable(True)
         tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
         self.editor_manager = EditorTabManager(tab_widget, self.event_bus, self.project_manager)
-        self.editor_manager.set_lsp_client(self.lsp_client) # <-- Pass LSP client to the manager
-        self.terminal = IntegratedTerminal(self.event_bus, self.project_manager)
-        right_splitter.addWidget(tab_widget)
-        right_splitter.addWidget(self.terminal)
-        right_splitter.setSizes([600, 300])
-        return right_splitter
+        self.editor_manager.set_lsp_client(self.lsp_client)
+
+        main_splitter.addWidget(tab_widget)
+        main_splitter.setSizes([300, 1100])
+        main_layout.addWidget(main_splitter)
+        self.status_bar = StatusBar(self.event_bus)
+        self.setStatusBar(self.status_bar)
+        self.status_bar.showMessage("Ready")
 
     def _create_menus(self):
         menubar = self.menuBar()
@@ -119,9 +110,6 @@ class CodeViewerWindow(QMainWindow):
         quick_open_shortcut.activated.connect(self._show_quick_file_finder)
 
     def _connect_events(self):
-        self.terminal.command_entered.connect(
-            lambda cmd, sid: self.event_bus.emit("terminal_command_entered", cmd, sid)
-        )
         self.event_bus.subscribe("code_generation_complete", self._on_code_generation_complete)
 
     def _on_code_generation_complete(self, files: dict):
@@ -194,7 +182,6 @@ class CodeViewerWindow(QMainWindow):
         project_path = Path(project_path_str)
         if self.project_context.set_new_project_context(project_path_str):
             self.file_tree_manager.load_existing_project_tree(project_path)
-            self.terminal.set_project_manager(self.project_manager)
             if self.quick_file_finder:
                 self.quick_file_finder.set_project_root(project_path)
             print(f"[CodeViewer] Loaded project: {project_path.name}")
@@ -259,22 +246,9 @@ class CodeViewerWindow(QMainWindow):
         self.activateWindow()
         self.raise_()
 
-    def highlight_error_in_editor(self, file_path: Path, line_number: int):
-        if self.editor_manager:
-            self.editor_manager.highlight_error(str(file_path), line_number)
-
     def clear_all_error_highlights(self):
         if self.editor_manager:
             self.editor_manager.clear_all_error_highlights()
-        self.hide_fix_button()
-
-    def show_fix_button(self):
-        if self.terminal:
-            self.terminal.show_fix_button()
-
-    def hide_fix_button(self):
-        if self.terminal:
-            self.terminal.hide_fix_button()
 
     def closeEvent(self, event: QCloseEvent):
         if self.editor_manager and self.editor_manager.has_unsaved_changes():

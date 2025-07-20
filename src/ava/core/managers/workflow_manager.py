@@ -28,7 +28,6 @@ class WorkflowManager:
         self.service_manager: ServiceManager = None
         self.window_manager: WindowManager = None
         self.task_manager: TaskManager = None
-        self._last_error_report = None
         self._last_generated_code: Optional[Dict[str, str]] = None
         self._is_plugin_override_active = False # Retained for potential future Python plugins
         print("[WorkflowManager] Initialized")
@@ -39,8 +38,6 @@ class WorkflowManager:
         self.window_manager = window_manager
         self.task_manager = task_manager
         self.event_bus.subscribe("review_and_fix_from_plugin_requested", self.handle_review_and_fix_request)
-        self.event_bus.subscribe("execution_failed", self.handle_execution_failed)
-        self.event_bus.subscribe("review_and_fix_requested", self.handle_review_and_fix_button)
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
         self.event_bus.subscribe("code_generation_complete", self._on_code_generation_complete)
         self.event_bus.subscribe("plugin_build_override_activated", self._activate_plugin_override)
@@ -165,64 +162,15 @@ class WorkflowManager:
             return ""
 
     def _on_session_cleared(self):
-        self._last_error_report = None
         self._last_generated_code = None
         self._is_plugin_override_active = False
 
-    def handle_execution_failed(self, error_report: str):
-        self._last_error_report = error_report
-        if self.window_manager and self.window_manager.get_code_viewer():
-            self.window_manager.get_code_viewer().show_fix_button()
-
-    def handle_review_and_fix_button(self):
-        if self._last_error_report:
-            self._initiate_fix_workflow(self._last_error_report)
-        else:
-            self.log("warning", "Fix button clicked but no error report was available.")
-
     def handle_review_and_fix_request(self, error_report: str):
+        # This method is retained for plugin compatibility but its core logic is removed.
         if error_report:
-            self._initiate_fix_workflow(error_report)
+            self.log("warning", "Review and fix from plugin was requested, but internal execution is disabled.")
         else:
             self.log("warning", "Received an empty error report to fix.")
-
-    def handle_highlighted_error_fix_request(self, highlighted_text: str):
-        if not highlighted_text.strip():
-            self.log("warning", "Fix requested for empty highlighted text.")
-            return
-
-        error_context_for_fix: str
-        if self._last_error_report:
-            error_context_for_fix = (
-                f"User highlighted the following from the terminal output:\n--- HIGHLIGHTED TEXT ---\n{highlighted_text}\n--- END HIGHLIGHTED TEXT ---\n\n"
-                f"This may be related to the last full error report from a failed command execution:\n--- LAST FULL ERROR ---\n{self._last_error_report}\n--- END LAST FULL ERROR ---"
-            )
-            self.log("info", "Fixing highlighted text with context from last full error report.")
-        else:
-            error_context_for_fix = (
-                f"User highlighted the following error/text from the terminal output. This is the primary context for the fix:\n"
-                f"--- HIGHLIGHTED TEXT ---\n{highlighted_text}\n--- END HIGHLIGHTED TEXT ---"
-            )
-            self.log("info", "Fixing highlighted text (no previous full error report stored).")
-
-        self._initiate_fix_workflow(error_context_for_fix)
-
-    def _initiate_fix_workflow(self, error_report: str):
-        if not (self.service_manager and self.task_manager):
-            self.log("error", "Cannot initiate fix: Core services not available.")
-            return
-
-        if self.window_manager and self.window_manager.get_code_viewer():
-            self.window_manager.get_code_viewer().terminal.show_fixing_in_progress()
-
-        validation_service = self.service_manager.get_validation_service()
-        if validation_service:
-            fix_coroutine = validation_service.review_and_fix_file(error_report)
-            self.task_manager.start_ai_workflow_task(fix_coroutine)
-        else:
-            self.log("error", "ValidationService not available to initiate fix.")
-            if self.window_manager and self.window_manager.get_code_viewer():
-                self.window_manager.get_code_viewer().terminal.hide_fix_button()
 
     def log(self, level, message):
         self.event_bus.emit("log_message_received", "WorkflowManager", level, message)

@@ -40,8 +40,6 @@ class EventCoordinator:
         print("[EventCoordinator] Wiring all events...")
         self._wire_ui_events()
         self._wire_ai_workflow_events()
-        self._wire_execution_events()
-        self._wire_terminal_events()
         self._wire_plugin_events()
         self._wire_chat_session_events()
         self._wire_status_bar_events()
@@ -159,9 +157,9 @@ class EventCoordinator:
     def _wire_ai_workflow_events(self):
         if self.workflow_manager:
             self.event_bus.subscribe("user_request_submitted", self.workflow_manager.handle_user_request)
-            self.event_bus.subscribe("review_and_fix_requested", self.workflow_manager.handle_review_and_fix_button)
+            self.event_bus.subscribe("review_and_fix_requested", self.workflow_manager.handle_review_and_fix_request)
             self.event_bus.subscribe("fix_highlighted_error_requested",
-                                     self.workflow_manager.handle_highlighted_error_fix_request)
+                                     self.workflow_manager.handle_review_and_fix_request)
         else:
             print("[EventCoordinator] AI Workflow Event Wiring: WorkflowManager not available.")
 
@@ -173,35 +171,6 @@ class EventCoordinator:
         else:
             print("[EventCoordinator] AI Workflow Event Wiring: CodeViewer not available.")
         print("[EventCoordinator] AI workflow events wired.")
-
-    def _wire_execution_events(self):
-        code_viewer = self.window_manager.get_code_viewer() if self.window_manager else None
-        if code_viewer:
-            self.event_bus.subscribe("error_highlight_requested", code_viewer.highlight_error_in_editor)
-            self.event_bus.subscribe("clear_error_highlights", code_viewer.clear_all_error_highlights)
-        else:
-            print("[EventCoordinator] Execution Event Wiring: CodeViewer not available.")
-
-        if self.workflow_manager:
-            self.event_bus.subscribe("execution_failed", self.workflow_manager.handle_execution_failed)
-        else:
-            print("[EventCoordinator] Execution Event Wiring: WorkflowManager not available.")
-        print("[EventCoordinator] Execution events wired.")
-
-    def _wire_terminal_events(self):
-        if not (self.task_manager and self.service_manager):
-            print("[EventCoordinator] Terminal Event Wiring: TaskManager or ServiceManager not available.")
-            return
-        self.event_bus.subscribe("terminal_command_entered", self._handle_terminal_command)
-        print("[EventCoordinator] Terminal events wired.")
-
-    def _handle_terminal_command(self, command: str, session_id: int):
-        terminal_service = self.service_manager.get_terminal_service()
-        if not terminal_service:
-            print("[EventCoordinator] Terminal Command Handling: TerminalService not available.")
-            return
-        command_coroutine = terminal_service.execute_command(command, session_id)
-        self.task_manager.start_terminal_command_task(command_coroutine, session_id)
 
     def _wire_plugin_events(self):
         plugin_manager = self.service_manager.get_plugin_manager()

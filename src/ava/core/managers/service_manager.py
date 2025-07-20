@@ -10,11 +10,10 @@ import asyncio # <-- NEW
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
 from src.ava.core.project_manager import ProjectManager
-from src.ava.core.execution_engine import ExecutionEngine
 from src.ava.core.plugins.plugin_manager import PluginManager
 from src.ava.services import (
-    ActionService, AppStateService, TerminalService, ArchitectService, ReviewerService,
-    ValidationService, ProjectIndexerService, ImportFixerService,
+    ActionService, AppStateService, ArchitectService, ReviewerService,
+    ProjectIndexerService, ImportFixerService,
     GenerationCoordinator, ContextManager, DependencyPlanner, IntegrationValidator, RAGService,
     LSPClientService # <-- NEW
 )
@@ -36,16 +35,13 @@ class ServiceManager:
 
         self.llm_client: LLMClient = None
         self.project_manager: ProjectManager = None
-        self.execution_engine: ExecutionEngine = None
         self.plugin_manager: PluginManager = None
         self.app_state_service: AppStateService = None
         self.action_service: "ActionService" = None
-        self.terminal_service: TerminalService = None
         self.rag_manager: "RAGManager" = None
         self.lsp_client_service: LSPClientService = None # <-- NEW
         self.architect_service: ArchitectService = None
         self.reviewer_service: ReviewerService = None
-        self.validation_service: ValidationService = None
         self.project_indexer_service: ProjectIndexerService = None
         self.import_fixer_service: ImportFixerService = None
         self.context_manager: ContextManager = None
@@ -68,7 +64,6 @@ class ServiceManager:
         self.log_to_event_bus("info", "[ServiceManager] Initializing core components...")
         self.llm_client = LLMClient(project_root)
         self.project_manager = project_manager
-        self.execution_engine = ExecutionEngine(self.project_manager)
         self.log_to_event_bus("info", "[ServiceManager] Core components initialized")
 
     async def initialize_plugins(self) -> bool:
@@ -107,8 +102,6 @@ class ServiceManager:
             rag_service_instance, self.project_indexer_service, self.import_fixer_service
         )
         self.reviewer_service = ReviewerService(self.event_bus, self.llm_client)
-        self.validation_service = ValidationService(self.event_bus, self.project_manager, self.reviewer_service)
-        self.terminal_service = TerminalService(self.event_bus, self.project_manager)
         self.action_service = ActionService(self.event_bus, self, None, None)
 
         self.log_to_event_bus("info", "[ServiceManager] Services initialized")
@@ -282,12 +275,6 @@ class ServiceManager:
     def get_project_manager(self) -> ProjectManager:
         return self.project_manager
 
-    def get_execution_engine(self) -> ExecutionEngine:
-        return self.execution_engine
-
-    def get_terminal_service(self) -> TerminalService:
-        return self.terminal_service
-
     def get_rag_manager(self) -> "RAGManager":
         return self.rag_manager
 
@@ -296,9 +283,6 @@ class ServiceManager:
 
     def get_reviewer_service(self) -> ReviewerService:
         return self.reviewer_service
-
-    def get_validation_service(self) -> ValidationService:
-        return self.validation_service
 
     def get_project_indexer_service(self) -> ProjectIndexerService:
         return self.project_indexer_service
@@ -323,9 +307,9 @@ class ServiceManager:
 
     def is_fully_initialized(self) -> bool:
         return all([
-            self.app_state_service, self.llm_client, self.project_manager, self.execution_engine,
-            self.terminal_service, self.architect_service, self.reviewer_service,
-            self.validation_service, self.project_indexer_service, self.import_fixer_service,
+            self.app_state_service, self.llm_client, self.project_manager,
+            self.architect_service, self.reviewer_service,
+            self.project_indexer_service, self.import_fixer_service,
             self.context_manager, self.dependency_planner, self.integration_validator,
             self.generation_coordinator, self.plugin_manager, self.action_service, self.lsp_client_service
         ])
