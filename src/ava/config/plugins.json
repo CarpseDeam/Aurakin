@@ -11,16 +11,6 @@
       "track_sessions": true,
       "max_greetings": 5
     },
-    "autonomous_code_reviewer": {
-      "auto_fix_enabled": false,
-      "proactive_analysis": true,
-      "error_monitoring": true,
-      "security_analysis": true,
-      "performance_analysis": false,
-      "learning_enabled": true,
-      "auto_commit_fixes": false,
-      "analysis_frequency": 600
-    },
     "living_design_agent": {
       "auto_update_frequency": 300,
       "generate_diagrams": true,

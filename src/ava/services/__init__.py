@@ -14,9 +14,8 @@ from .project_analyzer import ProjectAnalyzer
 from .project_indexer_service import ProjectIndexerService
 # from .rag_manager import RAGManager # <-- REMOVED to break circular import
 from .rag_service import RAGService
-from .reviewer_service import ReviewerService
-from .terminal_service import TerminalService
-from .validation_service import ValidationService
+
+
 
 __all__ = [
     "ActionService",
@@ -34,7 +33,4 @@ __all__ = [
     "ProjectIndexerService",
     # "RAGManager", # <-- REMOVED
     "RAGService",
-    "ReviewerService",
-    "TerminalService",
-    "ValidationService",
 ]
