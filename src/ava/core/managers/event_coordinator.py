@@ -1,7 +1,7 @@
 # src/ava/core/managers/event_coordinator.py
 import asyncio
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from src.ava.core.event_bus import EventBus
 
 if TYPE_CHECKING:
@@ -207,12 +207,20 @@ class EventCoordinator:
             logger.warning("AI Workflow Event Wiring: WorkflowManager not available.")
 
         code_viewer = self.window_manager.get_code_viewer() if self.window_manager else None
-        if code_viewer:
+        if code_viewer and hasattr(code_viewer, 'editor_manager'):
+            editor_manager = code_viewer.editor_manager
+            # --- FIX: Wire events directly to the specific manager responsible ---
+            # These events are for the parent CodeViewer window
             self.event_bus.subscribe("prepare_for_generation", code_viewer.prepare_for_generation)
-            self.event_bus.subscribe("stream_code_chunk", code_viewer.stream_code_chunk)
-            self.event_bus.subscribe("code_generation_complete", code_viewer.display_code)
+
+            # These events are for the EditorTabManager specifically to prevent UI corruption
+            self.event_bus.subscribe("stream_code_chunk", editor_manager.stream_content_to_editor)
+            self.event_bus.subscribe("highlight_lines_for_edit", editor_manager.handle_highlight_lines)
+            self.event_bus.subscribe("delete_highlighted_lines", editor_manager.handle_delete_lines)
+            self.event_bus.subscribe("position_cursor_for_insert", editor_manager.handle_position_cursor)
+            # --- END FIX ---
         else:
-            logger.warning("AI Workflow Event Wiring: CodeViewer not available.")
+            logger.warning("AI Workflow Event Wiring: CodeViewer or EditorTabManager not available.")
         logger.info("AI workflow events wired.")
 
     def _wire_plugin_events(self) -> None:

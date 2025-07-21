@@ -13,8 +13,8 @@ class ProjectManager:
     Manages project lifecycles by coordinating Git and Venv managers.
     This class handles the high-level state of the active project.
     """
-    def __init__(self, workspace_path: str = "workspace"):
-        self.workspace_root = Path(workspace_path).resolve()
+    def __init__(self, workspace_root_path: Path):
+        self.workspace_root = workspace_root_path
         self.workspace_root.mkdir(exist_ok=True)
 
         self.active_project_path: Optional[Path] = None

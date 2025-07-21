@@ -150,21 +150,25 @@ class CodeViewerWindow(QMainWindow):
         """
         Subscribes to relevant events on the event bus.
         """
-        self.event_bus.subscribe("code_generation_complete", self._on_code_generation_complete)
+        # CHANGE: Listen for the new, definitive 'workflow_finalized' event
+        # to refresh the file tree, preventing multiple refreshes during generation.
+        self.event_bus.subscribe("workflow_finalized", self._on_workflow_finalized)
 
-    def _on_code_generation_complete(self, files: dict) -> None:
+    # CHANGE: Renamed from _on_code_generation_complete to reflect the new event system.
+    # This is now the single point of truth for refreshing the UI after a build.
+    def _on_workflow_finalized(self, final_code: dict) -> None:
         """
-        Handles the completion of code generation.
+        Handles the final completion of a code generation workflow.
 
-        When code generation is done, this method refreshes the file tree and
-        updates the editor tabs with the new code.
+        This method refreshes the file tree and ensures the final, corrected
+        code is displayed in the editor tabs.
 
         Args:
-            files: A dictionary mapping filenames to their content.
+            final_code: A dictionary mapping filenames to their final content.
         """
         if self.file_tree_manager:
             self.file_tree_manager.refresh_tree_from_disk()
-        self.display_code(files)
+        self.display_code(final_code)
 
     def _save_current_file(self) -> None:
         """

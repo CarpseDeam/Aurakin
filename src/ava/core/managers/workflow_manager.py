@@ -42,17 +42,19 @@ class WorkflowManager:
         self.task_manager = task_manager
         self.event_bus.subscribe("review_and_fix_from_plugin_requested", self.handle_review_and_fix_request)
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
-        self.event_bus.subscribe("code_generation_complete", self._on_code_generation_complete)
+        # CHANGE: Subscribe to the new 'workflow_finalized' event for Aura's context
+        self.event_bus.subscribe("workflow_finalized", self._on_workflow_finalized)
         self.event_bus.subscribe("plugin_build_override_activated", self._activate_plugin_override)
 
     def _activate_plugin_override(self):
         """Called by a plugin to signal it's taking over the build process."""
         self._is_plugin_override_active = True
 
-    def _on_code_generation_complete(self, generated_files: Dict[str, str]):
-        """Catches the generated code after a build to be used by Aura."""
-        self.log("info", f"WorkflowManager captured {len(generated_files)} generated files for Aura's context.")
-        self._last_generated_code = generated_files
+    # CHANGE: Rename method and parameter for clarity
+    def _on_workflow_finalized(self, final_code: Dict[str, str]):
+        """Catches the final code after a build to be used by Aura."""
+        self.log("info", f"WorkflowManager captured {len(final_code)} final files for Aura's context.")
+        self._last_generated_code = final_code
         self._is_plugin_override_active = False  # Reset override after a build completes
 
     async def _run_aura_workflow(self, user_idea: str, conversation_history: list, image_bytes: Optional[bytes],
@@ -132,8 +134,9 @@ class WorkflowManager:
             commit_message = f"AI generation based on prompt: {prompt[:80]}"
             project_manager.git_manager.commit_staged_files(commit_message)
 
-        # This event updates the file tree and editor tabs with the final, corrected code
-        self.event_bus.emit("code_generation_complete", final_code)
+        # CHANGE: Emit the new 'workflow_finalized' event.
+        # This is the single source of truth that the entire process is complete.
+        self.event_bus.emit("workflow_finalized", final_code)
 
     def handle_user_request(self, prompt: str, conversation_history: list,
                             image_bytes: Optional[bytes] = None, image_media_type: Optional[str] = None,

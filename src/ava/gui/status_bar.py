@@ -35,7 +35,7 @@ class StatusBar(QStatusBar):
         self.agent_status_label = QLabel("Ready")
         self.addPermanentWidget(self.agent_icon)
         self.addPermanentWidget(self.agent_status_label)
-        self.update_agent_status("Avakin", "Ready", "fa5s.robot")
+        self.update_agent_status("Aurakin", "Ready", "fa5s.robot")
 
         # -- Separator --
         sep0 = QLabel("|")
@@ -93,4 +93,4 @@ class StatusBar(QStatusBar):
 
     def _on_workflow_finished(self):
         """Resets the agent status to 'Ready' when a workflow completes."""
-        self.update_agent_status("Avakin", "Ready", "fa5s.robot")
+        self.update_agent_status("Aurakin", "Ready", "fa5s.robot")

@@ -35,10 +35,7 @@ class EditorTabManager:
         self.event_bus.subscribe("items_deleted", self._handle_items_deleted)
         self.event_bus.subscribe("items_moved", self._handle_items_moved)
         self.event_bus.subscribe("items_added", self._handle_items_added)
-        # --- NEW: Surgical Edit Animation Events ---
-        self.event_bus.subscribe("highlight_lines_for_edit", self._handle_highlight_lines)
-        self.event_bus.subscribe("delete_highlighted_lines", self._handle_delete_lines)
-        self.event_bus.subscribe("position_cursor_for_insert", self._handle_position_cursor)
+        # --- REMOVED: Surgical Edit Animation Events are now wired by EventCoordinator ---
 
     def _setup_initial_state(self):
         self.clear_all_tabs()
@@ -252,17 +249,20 @@ class EditorTabManager:
             self.focus_tab(abs_path_str)
         return editor
 
-    def _handle_highlight_lines(self, filename: str, start_line: int, end_line: int):
+    # CHANGE: Made public for EventCoordinator to connect to
+    def handle_highlight_lines(self, filename: str, start_line: int, end_line: int):
         editor = self._get_editor_for_filename(filename)
         if editor:
             editor.highlight_line_range(start_line, end_line)
 
-    def _handle_delete_lines(self, filename: str):
+    # CHANGE: Made public for EventCoordinator to connect to
+    def handle_delete_lines(self, filename: str):
         editor = self._get_editor_for_filename(filename)
         if editor:
             editor.delete_highlighted_range()
 
-    def _handle_position_cursor(self, filename: str, line: int, col: int):
+    # CHANGE: Made public for EventCoordinator to connect to
+    def handle_position_cursor(self, filename: str, line: int, col: int):
         editor = self._get_editor_for_filename(filename)
         if editor:
             editor.set_cursor_position(line, col)

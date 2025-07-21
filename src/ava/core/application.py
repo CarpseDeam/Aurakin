@@ -32,7 +32,11 @@ class Application:
         print(f"[Application] Initializing with data_files_root: {self.project_root}")
 
         self.event_bus = EventBus()
-        self.project_manager = ProjectManager()
+
+        # Define a safe, explicit path for the workspace, outside the 'src' directory.
+        workspace_location = self.project_root.parent / "workspace"
+        self.project_manager = ProjectManager(workspace_root_path=workspace_location)
+
         self.plugin_manager = PluginManager(self.event_bus, self.project_root)
         self.window_manager = WindowManager(self.event_bus, self.project_manager)
         self.service_manager = ServiceManager(self.event_bus, self.project_root)
@@ -74,7 +78,8 @@ class Application:
             self.update_sidebar_plugin_status()
             self.task_manager.set_managers(self.service_manager, self.window_manager)
             self.workflow_manager.set_managers(self.service_manager, self.window_manager, self.task_manager)
-            self.event_coordinator.set_managers(self.service_manager, self.window_manager, self.task_manager, self.workflow_manager)
+            self.event_coordinator.set_managers(self.service_manager, self.window_manager, self.task_manager,
+                                                self.workflow_manager)
             self.event_coordinator.wire_all_events()
             self._initialization_complete = True
             print("[Application] Async initialization complete")
@@ -119,7 +124,6 @@ class Application:
             else:
                 print(f"[Application] Source custom plugin path not found: {custom_plugins_repo_dir}")
 
-
     def update_sidebar_plugin_status(self):
         """Gets plugin status from the manager and tells the sidebar to update."""
         if not self.plugin_manager or not self.window_manager: return
@@ -131,7 +135,8 @@ class Application:
                 status = "ok"
                 for plugin in all_plugins_info:
                     if plugin['name'] in enabled_plugins and plugin.get('state') != 'started':
-                        status = "error"; break
+                        status = "error";
+                        break
             main_window = self.window_manager.get_main_window()
             if main_window and hasattr(main_window, 'sidebar'):
                 main_window.sidebar.update_plugin_status(status)

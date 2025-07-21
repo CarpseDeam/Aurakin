@@ -1,4 +1,3 @@
-# src/ava/gui/flow_viewer.py
 import logging
 from typing import Dict, List, Optional
 
@@ -73,12 +72,12 @@ class FlowViewer(QGraphicsView):
         """
         Subscribes to relevant events on the EventBus.
         """
-        self.event_bus.subscribe("agent_status_changed", self._on_agent_status_changed)
+        # Note: _on_agent_status_changed is connected by EventCoordinator
         self.event_bus.subscribe("ai_workflow_finished", self._on_workflow_finished)
         self.event_bus.subscribe("new_session_requested", self._clear_flow)
         self.event_bus.subscribe("chat_cleared", self._clear_flow)
 
-    def _clear_flow(self) -> None:
+    def _clear_flow(self, *args, **kwargs) -> None:
         """
         Resets the view to a clean state, removing all nodes and connections.
         """
@@ -94,7 +93,7 @@ class FlowViewer(QGraphicsView):
 
         This method creates a new node if the agent is seen for the first time
         in the current workflow, updates the states of all nodes, and triggers
-        a relayout and animation.
+        a relayout.
 
         Args:
             agent_name: The name of the agent reporting the status.
@@ -112,32 +111,30 @@ class FlowViewer(QGraphicsView):
             # Update existing node (might be a sub-status)
             self.nodes[agent_name].update_content(status_text, icon_name)
 
-        # Update states for all nodes
-        for name in self.node_order:
+        # Update states for all nodes: set current to active, previous to completed
+        for i, name in enumerate(self.node_order):
             node = self.nodes[name]
-            if name == agent_name:
-                node.set_active_state(True)
-            else:
-                # Mark all previous nodes as completed
-                node.set_active_state(False)
+            is_current_agent = (name == agent_name)
+            is_past_agent = (i < self.node_order.index(agent_name))
+
+            node.set_active_state(is_current_agent)
+            if is_past_agent:
                 node.set_completed_state(True)
 
     def _on_workflow_finished(self) -> None:
         """
         Handles the completion of an AI workflow.
 
-        Marks the final node in the sequence as successful.
+        Marks all nodes in the sequence as successful.
         """
-        if self.node_order:
-            last_agent_name = self.node_order[-1]
-            if last_agent_name in self.nodes:
-                self.nodes[last_agent_name].set_active_state(False)
-                self.nodes[last_agent_name].set_completed_state(True, success=True)
-                logger.info(f"Workflow finished. Marked node '{last_agent_name}' as success.")
+        for node in self.nodes.values():
+            node.set_active_state(False)
+            node.set_completed_state(True, success=True)
+        logger.info("Workflow finished. Marked all nodes as success.")
 
     def _relayout_and_connect_nodes(self) -> None:
         """
-        Calculates new positions for all nodes and animates them into place.
+        Calculates new positions for all nodes and sets them directly.
         It also redraws the connections between nodes.
         """
         # Clear old connections
@@ -148,19 +145,13 @@ class FlowViewer(QGraphicsView):
         total_width = (len(self.nodes) * NODE_WIDTH) + (max(0, len(self.nodes) - 1) * HORIZONTAL_SPACING)
         start_x = -total_width / 2.0
 
-        animation_group = QParallelAnimationGroup(self)
-
         for i, agent_name in enumerate(self.node_order):
             node = self.nodes[agent_name]
             new_x = start_x + i * (NODE_WIDTH + HORIZONTAL_SPACING)
             new_y = -(NODE_HEIGHT / 2)  # Center vertically
 
-            # Animate node to its new position
-            pos_animation = QPropertyAnimation(node, b"pos")
-            pos_animation.setEndValue(QPointF(new_x, new_y))
-            pos_animation.setDuration(300)
-            pos_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-            animation_group.addAnimation(pos_animation)
+            # Set position directly instead of animating
+            node.setPos(new_x, new_y)
 
             # Add connection to previous node
             if i > 0:
@@ -169,10 +160,6 @@ class FlowViewer(QGraphicsView):
                 self.scene.addItem(connection)
                 self.connections.append(connection)
 
-        animation_group.finished.connect(self._center_view)
-        animation_group.start()
-
-        # Center view immediately for responsiveness, then again after animation
         self._center_view()
 
     def _create_connection(self, start_node: FlowNode, end_node: FlowNode) -> QGraphicsPathItem:
@@ -186,13 +173,18 @@ class FlowViewer(QGraphicsView):
         Returns:
             A QGraphicsPathItem styled as a connecting arrow.
         """
-        # Use current positions for drawing, animation will catch up
         start_point = start_node.pos() + QPointF(NODE_WIDTH, NODE_HEIGHT / 2)
         end_point = end_node.pos() + QPointF(0, NODE_HEIGHT / 2)
 
         path = QPainterPath()
         path.moveTo(start_point)
-        path.lineTo(end_point)
+
+        # Create a gentle curve for the connection
+        control_x1 = start_point.x() + HORIZONTAL_SPACING / 2
+        control_y1 = start_point.y()
+        control_x2 = end_point.x() - HORIZONTAL_SPACING / 2
+        control_y2 = end_point.y()
+        path.cubicTo(control_x1, control_y1, control_x2, control_y2, end_point.x(), end_point.y())
 
         pen = QPen(QColor(Colors.BORDER_DEFAULT), 2, Qt.PenStyle.SolidLine)
         connection_item = QGraphicsPathItem(path)

@@ -33,6 +33,9 @@ class PanelManager(QWidget):
         self.flow_viewer: Optional[FlowViewer] = None
         self.tab_widget: Optional[QTabWidget] = None
 
+        # --- ADDED: Set a maximum height to prevent uncontrolled growth ---
+        self.setMaximumHeight(400)
+
         self._setup_ui()
         logger.info("PanelManager initialized.")
 
