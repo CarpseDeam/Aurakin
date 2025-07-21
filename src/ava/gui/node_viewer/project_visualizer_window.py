@@ -38,9 +38,9 @@ from src.ava.gui.node_viewer.project_node import ProjectNode
 
 logger = logging.getLogger(__name__)
 
-# --- Layout Constants ---
+# --- CORRECTED Layout Constants ---
 COLUMN_WIDTH = 300
-ROW_HEIGHT = 80
+ROW_HEIGHT = 90
 
 
 class ConnectionItem(QGraphicsPathItem):
@@ -58,7 +58,8 @@ class ConnectionItem(QGraphicsPathItem):
         self.start_node = start_node
         self.end_node = end_node
         self.arrow_head = QPolygonF()
-        pen = QPen(Colors.BORDER_DEFAULT, 1.0, Qt.PenStyle.DotLine)
+        # --- CORRECTED PEN STYLE ---
+        pen = QPen(QColor("#555"), 2.0, Qt.PenStyle.SolidLine)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         self.setPen(pen)
         self.setZValue(-1)
@@ -73,28 +74,31 @@ class ConnectionItem(QGraphicsPathItem):
         end_pos = self.end_node.pos() + QPointF(0, self.end_node.boundingRect().height() / 2)
 
         path = QPainterPath(start_pos)
-        dx = abs(end_pos.x() - start_pos.x()) * 0.5
-        c1 = QPointF(start_pos.x() + dx, start_pos.y())
-        c2 = QPointF(end_pos.x() - dx, end_pos.y())
+        offset = (end_pos.x() - start_pos.x()) * 0.5
+        c1 = QPointF(start_pos.x() + offset, start_pos.y())
+        c2 = QPointF(end_pos.x() - offset, end_pos.y())
         path.cubicTo(c1, c2, end_pos)
 
         self.setPath(path)
-        self._update_arrowhead(c2, end_pos)
+        # --- CORRECTED ARROWHEAD CALL ---
+        self._update_arrowhead(path, end_pos)
 
-    def _update_arrowhead(self, control_point: QPointF, end_point: QPointF) -> None:
+    def _update_arrowhead(self, path: QPainterPath, end_point: QPointF) -> None:
         """
         Calculates the arrowhead polygon, aligning it with the curve's tangent.
 
         Args:
-            control_point: The second control point of the Bezier curve (c2).
+            path: The QPainterPath of the curve.
             end_point: The end point of the Bezier curve.
         """
-        angle = math.atan2(end_point.y() - control_point.y(), end_point.x() - control_point.x())
-        arrow_size = 8.0
-        arrow_p1 = end_point - QPointF(math.cos(angle + math.pi / 6) * arrow_size,
-                                       math.sin(angle + math.pi / 6) * arrow_size)
-        arrow_p2 = end_point - QPointF(math.cos(angle - math.pi / 6) * arrow_size,
-                                       math.sin(angle - math.pi / 6) * arrow_size)
+        # --- CORRECTED ANGLE CALCULATION ---
+        # Get the angle at the very end of the curve for perfect alignment
+        angle_rad = math.radians(180 - path.angleAtPercent(1.0))
+        arrow_size = 10.0
+        arrow_p1 = end_point + QPointF(math.cos(angle_rad - math.pi / 6) * arrow_size,
+                                       math.sin(angle_rad - math.pi / 6) * arrow_size)
+        arrow_p2 = end_point + QPointF(math.cos(angle_rad + math.pi / 6) * arrow_size,
+                                       math.sin(angle_rad + math.pi / 6) * arrow_size)
         self.arrow_head.clear()
         self.arrow_head.append(end_point)
         self.arrow_head.append(arrow_p1)
@@ -111,7 +115,7 @@ class ConnectionItem(QGraphicsPathItem):
         """
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         super().paint(painter, option, widget)
-        painter.setBrush(QBrush(Colors.BORDER_DEFAULT))
+        painter.setBrush(QBrush(QColor("#555")))
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawPolygon(self.arrow_head)
 

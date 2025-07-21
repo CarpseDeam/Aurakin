@@ -16,7 +16,6 @@ from src.ava.gui.find_replace_dialog import FindReplaceDialog
 from src.ava.gui.quick_file_finder import QuickFileFinder
 from src.ava.gui.status_bar import StatusBar
 from src.ava.services.lsp_client_service import LSPClientService
-from src.ava.gui.panel_manager import PanelManager
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,6 @@ class CodeViewerWindow(QMainWindow):
         self.lsp_client = lsp_client
         self.editor_manager: EditorTabManager = None
         self.file_tree_manager: FileTreeManager = None
-        self.panel_manager: PanelManager = None
 
         self.find_replace_dialog: FindReplaceDialog = None
         self.quick_file_finder: QuickFileFinder = None
@@ -69,25 +67,16 @@ class CodeViewerWindow(QMainWindow):
         file_tree_panel_layout.addWidget(self.file_tree_manager.get_widget())
         main_splitter.addWidget(file_tree_panel_widget)
 
-        # --- Right Panel: Vertical Splitter for Editor and Panels ---
-        right_panel_splitter = QSplitter(Qt.Orientation.Vertical)
-
-        # Top part of the right panel: Editor Tabs
+        # --- Right Panel: Editor Tabs Only ---
+        # The vertical splitter and PanelManager have been removed.
         tab_widget = QTabWidget()
         tab_widget.setTabsClosable(True)
         tab_widget.setMovable(True)
         tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
         self.editor_manager = EditorTabManager(tab_widget, self.event_bus, self.project_manager)
         self.editor_manager.set_lsp_client(self.lsp_client)
-        right_panel_splitter.addWidget(tab_widget)
+        main_splitter.addWidget(tab_widget) # Add tab_widget directly to the main splitter
 
-        # Bottom part of the right panel: Panel Manager (Flow Viewer, etc.)
-        self.panel_manager = PanelManager(self.event_bus)
-        right_panel_splitter.addWidget(self.panel_manager)
-
-        right_panel_splitter.setSizes([700, 200])
-
-        main_splitter.addWidget(right_panel_splitter)
         main_splitter.setSizes([300, 1100])
 
         main_layout.addWidget(main_splitter)

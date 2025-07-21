@@ -120,6 +120,22 @@ class WorkflowManager:
             self.event_bus.emit("ai_response_ready", "Sorry, I couldn't create a plan for that request.")
             return
 
+        # --- THIS IS THE FIX ---
+        # For new projects, ensure .gitignore is part of the plan so the visualizer sees it.
+        is_new_project = not existing_files
+        if is_new_project:
+            tasks = whiteboard_plan.get("tasks", [])
+            has_gitignore = any(task.get("filename") == ".gitignore" for task in tasks)
+            if not has_gitignore:
+                tasks.append({
+                    "type": "create_file",
+                    "filename": ".gitignore",
+                    "description": "Standard git ignore file for Python projects."
+                })
+                whiteboard_plan["tasks"] = tasks
+                self.log("info", "Injected .gitignore into the build plan for new project visualization.")
+        # --- END FIX ---
+
         # 2. Execute the plan with the Coordinator
         final_code = await coordinator.coordinate_generation(whiteboard_plan, existing_files)
         if not final_code:

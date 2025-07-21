@@ -32,11 +32,8 @@ class Application:
         print(f"[Application] Initializing with data_files_root: {self.project_root}")
 
         self.event_bus = EventBus()
-
-        # Define a safe, explicit path for the workspace, outside the 'src' directory.
         workspace_location = self.project_root.parent / "workspace"
         self.project_manager = ProjectManager(workspace_root_path=workspace_location)
-
         self.plugin_manager = PluginManager(self.event_bus, self.project_root)
         self.window_manager = WindowManager(self.event_bus, self.project_manager)
         self.service_manager = ServiceManager(self.event_bus, self.project_root)
@@ -49,7 +46,8 @@ class Application:
     def _connect_events(self):
         """Set up event connections between components."""
         self.event_bus.subscribe("open_code_viewer_requested", self.window_manager.show_code_viewer)
-        self.event_bus.subscribe("project_root_selected", self.project_manager.load_project)
+        # --- FIX: Removed the conflicting event subscription ---
+        # self.event_bus.subscribe("project_root_selected", self.project_manager.load_project)
         self.event_bus.subscribe("application_shutdown", lambda: asyncio.create_task(self.shutdown()))
 
     async def initialize_async(self):
@@ -58,18 +56,11 @@ class Application:
         try:
             self.service_manager.plugin_manager = self.plugin_manager
             self._configure_plugin_paths()
-
-            # --- NEW: Ensure ServiceManager is given to PluginManager ---
             self.plugin_manager.set_service_manager(self.service_manager)
-            # --- END NEW ---
-
             self.service_manager.initialize_core_components(self.project_root, self.project_manager)
             await self.service_manager.initialize_plugins()
             self.service_manager.initialize_services()
-
-            # Launch all background servers
             self.service_manager.launch_background_servers()
-
             self.window_manager.initialize_windows(
                 self.service_manager.get_llm_client(),
                 self.service_manager,
@@ -94,35 +85,17 @@ class Application:
             bundled_builtin_plugins_dir = self.project_root / "ava" / "core" / "plugins" / "examples"
             if bundled_builtin_plugins_dir.exists():
                 self.plugin_manager.add_discovery_path(bundled_builtin_plugins_dir)
-                print(f"[Application] Added bundled plugin discovery path: {bundled_builtin_plugins_dir}")
-            else:
-                print(f"[Application] Bundled built-in plugin path not found: {bundled_builtin_plugins_dir}")
-
             custom_plugins_next_to_exe = self.project_root / "plugins"
             if custom_plugins_next_to_exe.exists():
                 self.plugin_manager.add_discovery_path(custom_plugins_next_to_exe)
-                print(f"[Application] Added custom (next to exe) plugin discovery path: {custom_plugins_next_to_exe}")
-            else:
-                print(f"[Application] Custom plugin path (next to exe) not found: {custom_plugins_next_to_exe}")
-
         else:
             actual_repo_root = self.project_root.parent
-
-            # This ensures that when running from source, the application looks inside
-            # the `examples` directory for built-in plugins like our new Godot one.
             builtin_plugins_src_dir = actual_repo_root / "src" / "ava" / "core" / "plugins" / "examples"
             if builtin_plugins_src_dir.exists():
                 self.plugin_manager.add_discovery_path(builtin_plugins_src_dir)
-                print(f"[Application] Added source (built-in) plugin discovery path: {builtin_plugins_src_dir}")
-            else:
-                print(f"[Application] Source built-in plugin path not found: {builtin_plugins_src_dir}")
-
             custom_plugins_repo_dir = actual_repo_root / "plugins"
             if custom_plugins_repo_dir.exists():
                 self.plugin_manager.add_discovery_path(custom_plugins_repo_dir)
-                print(f"[Application] Added source (custom) plugin discovery path: {custom_plugins_repo_dir}")
-            else:
-                print(f"[Application] Source custom plugin path not found: {custom_plugins_repo_dir}")
 
     def update_sidebar_plugin_status(self):
         """Gets plugin status from the manager and tells the sidebar to update."""

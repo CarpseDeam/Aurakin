@@ -1,185 +1,108 @@
 # src/ava/gui/node_viewer/project_node.py
-"""
-Defines the graphical node item used in the Project Visualizer.
-"""
 import logging
-from typing import List, Any, Optional, TYPE_CHECKING
-
-from PySide6.QtWidgets import (
-    QGraphicsObject, QGraphicsItem, QStyleOptionGraphicsItem, QWidget, QGraphicsSceneHoverEvent
-)
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import QPainter, QBrush, QPen
+from typing import Any, List, Optional
 import qtawesome as qta
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QFontMetrics, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject, QStyleOptionGraphicsItem, QWidget, QGraphicsSceneHoverEvent
 
 from src.ava.gui.components import Colors, Typography
 
-if TYPE_CHECKING:
-    from .project_visualizer_window import ConnectionItem
-
 logger = logging.getLogger(__name__)
-
+NODE_WIDTH, NODE_HEIGHT, NODE_RADIUS, ICON_SIZE = 150, 45, 8, 20
 
 class ProjectNode(QGraphicsObject):
     """
-    Represents a single node (file, folder, or root) in the project visualizer graph.
-    This is a QGraphicsObject that can be moved, selected, and connected with lines.
+    A graphical node representing a file or folder. It handles its own drawing,
+    state changes (hover, selection), and notifies its connections when it moves.
     """
-
-    def __init__(self, name: str, path: Optional[str] = None, node_type: str = "file",
-                 parent: Optional[QGraphicsItem] = None):
-        """
-        Initializes the ProjectNode.
-
-        Args:
-            name: The display name of the node (e.g., filename or folder name).
-            path: The full relative path of the node within the project.
-            node_type: The type of the node ('file', 'folder', 'root').
-            parent: The parent QGraphicsItem in the scene.
-        """
+    def __init__(self, name: str, path: str, is_folder: bool, parent: Optional[QGraphicsItem] = None) -> None:
         super().__init__(parent)
         self.name = name
         self.path = path
-        self.node_type = node_type
-        self.incoming_connections: List['ConnectionItem'] = []
-        self.outgoing_connections: List['ConnectionItem'] = []
+        self.is_folder = is_folder
         self._is_hovered = False
+        self.incoming_connections: List[Any] = []
+        self.outgoing_connections: List[Any] = []
 
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges)
-        self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
+        self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable)
         self.setAcceptHoverEvents(True)
+        self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
+        self.setToolTip(self.path)
+
+        icon_name = "fa5s.folder" if self.is_folder else "fa5s.file-alt"
+        self.icon = qta.icon(icon_name, color=Colors.TEXT_SECONDARY)
+
+    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
+        """
+        Overrides the base method to update connection lines when the node is moved.
+        This is the core of the "dynamic connections" feature.
+        """
+        # --- THIS IS THE FIX ---
+        if change == QGraphicsItem.ItemPositionHasChanged:
+        # --- END FIX ---
+            for conn in self.incoming_connections:
+                conn.update_path()
+            for conn in self.outgoing_connections:
+                conn.update_path()
+        return super().itemChange(change, value)
+
+    def add_connection(self, connection: Any, is_outgoing: bool) -> None:
+        """Registers a connection line with this node."""
+        if is_outgoing:
+            self.outgoing_connections.append(connection)
+        else:
+            self.incoming_connections.append(connection)
+
+    def boundingRect(self) -> QRectF:
+        """Defines the node's total area for painting and interaction."""
+        return QRectF(0, 0, NODE_WIDTH, NODE_HEIGHT)
+
+    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None) -> None:
+        """Draws the node, including its background, icon, and text."""
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        node_rect = self.boundingRect()
+
+        # Determine colors based on the node's current state
+        bg_color = QColor(Colors.ELEVATED_BG)
+        border_color = QColor(Colors.BORDER_DEFAULT)
+        text_color = QColor(Colors.TEXT_SECONDARY)
+
+        if self.isSelected():
+            bg_color = QColor(Colors.ACCENT_BLUE)
+            border_color = QColor(Colors.ACCENT_BLUE.lighter(130))
+            text_color = QColor(Colors.TEXT_PRIMARY)
+        elif self._is_hovered:
+            bg_color = bg_color.lighter(120)
+
+        # Draw the node body
+        path = QPainterPath()
+        path.addRoundedRect(node_rect, NODE_RADIUS, NODE_RADIUS)
+        painter.setPen(QPen(border_color, 1.5))
+        painter.fillPath(path, QBrush(bg_color))
+        painter.drawPath(path)
+
+        # Draw the icon
+        icon_rect = QRectF(8, (NODE_HEIGHT - ICON_SIZE) / 2, ICON_SIZE, ICON_SIZE)
+        self.icon.paint(painter, icon_rect.toRect())
+
+        # Draw the text
+        text_x = icon_rect.right() + 8
+        text_width = NODE_WIDTH - text_x - 8
+        text_rect = QRectF(text_x, 0, text_width, NODE_HEIGHT)
+        painter.setPen(QPen(text_color))
+        painter.setFont(Typography.body())
+        elided_name = QFontMetrics(painter.font()).elidedText(self.name, Qt.TextElideMode.ElideRight, text_width)
+        painter.drawText(text_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, elided_name)
 
     def hoverEnterEvent(self, event: QGraphicsSceneHoverEvent) -> None:
-        """
-        Handles mouse hover enter event to provide visual feedback.
-
-        Args:
-            event: The hover event.
-        """
+        """Changes the hover state and triggers a repaint."""
         self._is_hovered = True
         self.update()
         super().hoverEnterEvent(event)
 
     def hoverLeaveEvent(self, event: QGraphicsSceneHoverEvent) -> None:
-        """
-        Handles mouse hover leave event to remove visual feedback.
-
-        Args:
-            event: The hover event.
-        """
+        """Resets the hover state and triggers a repaint."""
         self._is_hovered = False
         self.update()
         super().hoverLeaveEvent(event)
-
-    def boundingRect(self) -> QRectF:
-        """
-        Defines the outer bounds of the node item.
-
-        Returns:
-            The bounding rectangle of the node.
-        """
-        return QRectF(0, 0, 150, 50)
-
-    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None) -> None:
-        """
-        Paints the node with a specific style based on its type and state.
-
-        Args:
-            painter: The QPainter to use for drawing.
-            option: Provides style options for the item.
-            widget: The widget that is being painted on, if any.
-        """
-        rect = self.boundingRect()
-
-        # Determine background color
-        if self.node_type == "folder":
-            brush_color = Colors.ACCENT_BLUE
-        elif self.node_type == "root":
-            brush_color = Colors.ACCENT_PURPLE
-        else:  # file
-            brush_color = Colors.ELEVATED_BG
-
-        # Determine border color based on state
-        if self.isSelected():
-            pen_color = Colors.ACCENT_BLUE.lighter(130)
-            pen_width = 3
-        elif self._is_hovered:
-            pen_color = Colors.ACCENT_BLUE
-            pen_width = 2
-        else:
-            pen_color = Colors.BORDER_DEFAULT
-            pen_width = 2
-
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QBrush(brush_color))
-        painter.setPen(QPen(pen_color, pen_width))
-        painter.drawRoundedRect(rect, 10.0, 10.0)
-
-        # --- Icon Drawing ---
-        icon_size = 24
-        icon_margin = 10
-        icon_rect = QRectF(icon_margin, (rect.height() - icon_size) / 2, icon_size, icon_size)
-
-        icon = None
-        icon_color = Colors.TEXT_PRIMARY
-        if self.node_type == "folder":
-            icon = qta.icon("fa5s.folder", color=icon_color)
-        elif self.node_type == "root":
-            icon = qta.icon("fa5s.brain", color=icon_color)
-        else:  # file
-            icon = qta.icon("fa5s.file-code", color=icon_color)
-
-        if icon:
-            icon.paint(painter, icon_rect.toRect())
-
-        # --- Text Drawing ---
-        text_margin = 5
-        text_rect = rect.adjusted(icon_rect.right() + text_margin, 0, -text_margin, 0)
-        painter.setPen(QPen(Colors.TEXT_PRIMARY))
-        painter.setFont(Typography.body())
-
-        font_metrics = painter.fontMetrics()
-        elided_name = font_metrics.elidedText(self.name, Qt.TextElideMode.ElideRight, text_rect.width())
-        painter.drawText(text_rect, Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft, elided_name)
-
-    def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
-        """
-        Handles changes to the item's state, such as its position or selection.
-        When the node moves, it updates its connections.
-
-        Args:
-            change: The parameter of the item that is changing.
-            value: The new value.
-
-        Returns:
-            The result of the base class's itemChange method.
-        """
-        if change == QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged:
-            for connection in self.incoming_connections:
-                connection.update_path()
-            for connection in self.outgoing_connections:
-                connection.update_path()
-        # Update appearance on selection change
-        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
-            self.update()
-        return super().itemChange(change, value)
-
-    def add_incoming_connection(self, connection: 'ConnectionItem') -> None:
-        """
-        Adds an incoming connection line to this node.
-
-        Args:
-            connection: The ConnectionItem to add.
-        """
-        self.incoming_connections.append(connection)
-
-    def add_outgoing_connection(self, connection: 'ConnectionItem') -> None:
-        """
-        Adds an outgoing connection line from this node.
-
-        Args:
-            connection: The ConnectionItem to add.
-        """
-        self.outgoing_connections.append(connection)

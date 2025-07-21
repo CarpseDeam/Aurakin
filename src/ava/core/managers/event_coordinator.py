@@ -33,7 +33,8 @@ class EventCoordinator:
         self.workflow_manager: "WorkflowManager" = None
         logger.info("Initialized")
 
-    def set_managers(self, service_manager: "ServiceManager", window_manager: "WindowManager", task_manager: "TaskManager",
+    def set_managers(self, service_manager: "ServiceManager", window_manager: "WindowManager",
+                     task_manager: "TaskManager",
                      workflow_manager: "WorkflowManager") -> None:
         """
         Set references to other managers.
@@ -83,10 +84,18 @@ class EventCoordinator:
             logger.warning("ProjectVisualizer not available for event wiring.")
             return
 
-        # Connect the plan generation from ArchitectService to the visualizer
-        self.event_bus.subscribe("project_plan_generated", visualizer._handle_project_plan_generated)
-        # Connect the file generation start from GenerationCoordinator to the visualizer
-        self.event_bus.subscribe("file_generation_starting", visualizer._handle_file_generation_starting)
+        # This event is for the initial plan animation
+        self.event_bus.subscribe("project_plan_generated", visualizer.handle_project_plan_generated)
+
+        # This event handles loading an existing project from disk
+        self.event_bus.subscribe("project_root_selected", visualizer.display_existing_project)
+
+        # --- THIS IS THE FIX FOR MISSING FILES ---
+        # This event fires AFTER all code is generated and saved. It forces the visualizer
+        # to re-scan the project directory, guaranteeing it draws all the new files.
+        self.event_bus.subscribe("workflow_finalized", lambda final_code: visualizer.display_existing_project(
+            self.service_manager.project_manager.active_project_path))
+        # --- END OF FIX ---
 
         logger.info("Project Visualizer events wired.")
 
@@ -139,8 +148,10 @@ class EventCoordinator:
 
         action_service = self.service_manager.get_action_service()
         if action_service:
-            self.event_bus.subscribe("new_project_requested", lambda: asyncio.create_task(action_service.handle_new_project()))
-            self.event_bus.subscribe("load_project_requested", lambda: asyncio.create_task(action_service.handle_load_project()))
+            self.event_bus.subscribe("new_project_requested",
+                                     lambda: asyncio.create_task(action_service.handle_new_project()))
+            self.event_bus.subscribe("load_project_requested",
+                                     lambda: asyncio.create_task(action_service.handle_load_project()))
             self.event_bus.subscribe("new_session_requested", action_service.handle_new_session)
             self.event_bus.subscribe("build_prompt_from_chat_requested", action_service.handle_build_prompt_from_chat)
         else:
