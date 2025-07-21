@@ -29,6 +29,14 @@ class ArchitectService:
                  rag_service: RAGService, project_indexer: ProjectIndexerService):
         """
         Initializes the ArchitectService.
+
+        Args:
+            service_manager: The main service manager.
+            event_bus: The application's event bus.
+            llm_client: The client for interacting with LLMs.
+            project_manager: The manager for the active project.
+            rag_service: The service for RAG queries.
+            project_indexer: The service for indexing project symbols.
         """
         self.service_manager = service_manager
         self.event_bus = event_bus
@@ -41,6 +49,13 @@ class ArchitectService:
         Dict[str, Any]]:
         """
         Creates a detailed, multi-step "Whiteboard" plan for code generation.
+
+        Args:
+            user_request: The user's request for code generation or modification.
+            existing_files: A dictionary of existing files and their content.
+
+        Returns:
+            A dictionary representing the detailed plan, or None if planning fails.
         """
         self.log("info", f"Architect received request: '{user_request[:100]}...'")
         self.event_bus.emit("agent_status_changed", "Architect", "Planning tasks...", "fa5s.tasks")
@@ -49,6 +64,10 @@ class ArchitectService:
         if not task_plan or "tasks" not in task_plan:
             self.log("error", "Failed to generate a valid initial task plan.")
             return None
+
+        # --- NEW: Emit event for real-time visualization ---
+        self.event_bus.emit("project_plan_generated", task_plan)
+        # --- END NEW ---
 
         self.log("success", f"Generated {len(task_plan['tasks'])} high-level tasks.")
         self.event_bus.emit("agent_status_changed", "Architect", "Locating code for changes...", "fa5s.search-location")
@@ -79,6 +98,16 @@ class ArchitectService:
 
     async def _generate_task_plan(self, user_request: str, existing_files: Optional[Dict[str, str]]) -> Optional[
         Dict[str, Any]]:
+        """
+        Generates the high-level task plan using an LLM.
+
+        Args:
+            user_request: The user's request.
+            existing_files: The content of existing project files.
+
+        Returns:
+            The parsed JSON plan from the LLM, or None on failure.
+        """
         self.log("info", "Generating high-level task plan...")
         rag_context = await self._get_combined_rag_context(user_request)
         code_context_str = json.dumps(existing_files, indent=2) if existing_files else "{}"
@@ -109,6 +138,16 @@ class ArchitectService:
             return None
 
     async def _locate_lines_for_task(self, task: Dict[str, Any], file_content: str) -> Dict[str, Any]:
+        """
+        Uses an LLM to find the start and end lines for a modification task.
+
+        Args:
+            task: The task dictionary.
+            file_content: The content of the file to be modified.
+
+        Returns:
+            The task dictionary, augmented with 'start_line' and 'end_line' if found.
+        """
         filename = task["filename"]
         description = task["description"]
         self.log("info", f"Locating lines in '{filename}' for task: '{description}'")
@@ -138,6 +177,15 @@ class ArchitectService:
             return task
 
     async def _get_combined_rag_context(self, prompt: str) -> str:
+        """
+        Queries both project and global RAG collections and combines the results.
+
+        Args:
+            prompt: The user's query prompt.
+
+        Returns:
+            A formatted string containing context from both RAG collections.
+        """
         project_rag_context = await self.rag_service.query(prompt, target_collection="project")
         global_rag_context = await self.rag_service.query(prompt, target_collection="global")
         context_parts = []
@@ -148,15 +196,43 @@ class ArchitectService:
         return "\n\n---\n\n".join(context_parts) if context_parts else "No specific RAG context found."
 
     def _parse_json_response(self, response: str) -> dict:
+        """
+        Robustly parses a JSON object from a string that may contain other text.
+
+        Args:
+            response: The string containing the JSON object.
+
+        Returns:
+            The parsed dictionary.
+
+        Raises:
+            ValueError: If no JSON object is found in the response.
+        """
         match = re.search(r'\{.*\}', response, re.DOTALL)
         if not match:
             raise ValueError("No JSON object found in the response.")
         return json.loads(match.group(0))
 
     def handle_error(self, agent: str, error_msg: str, response: str = ""):
+        """
+        Logs an error and emits an event to notify the user.
+
+        Args:
+            agent: The name of the agent that failed.
+            error_msg: The error message.
+            response: The raw response from the LLM, if any.
+        """
         self.log("error", f"{agent} failed: {error_msg}\nResponse: {response}")
         self.event_bus.emit("ai_response_ready", f"Sorry, the {agent} failed.")
 
     def log(self, level: str, message: str, details: str = ""):
+        """
+        Sends a log message through the event bus.
+
+        Args:
+            level: The log level (e.g., 'info', 'error').
+            message: The main log message.
+            details: Optional additional details.
+        """
         full_message = f"{message}\nDetails: {details}" if details else message
         self.event_bus.emit("log_message_received", "ArchitectService", level, full_message)
