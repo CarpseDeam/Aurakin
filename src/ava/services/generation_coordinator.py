@@ -1,3 +1,4 @@
+```python
 # src/ava/services/generation_coordinator.py
 import asyncio
 import io
@@ -78,10 +79,9 @@ class GenerationCoordinator:
             self.log("warning", f"Task '{task.get('description')}' has no filename. Skipping.")
             return current_files
 
-        # --- FIX: Emit the real-time event BEFORE generation starts ---
-        if filename not in current_files:
-            self.event_bus.emit("file_generation_starting", filename)
-            await asyncio.sleep(0.5) # Give the animation a moment to start
+        # Emit event for every file generation task
+        self.event_bus.emit("file_generation_starting", filename)
+        await asyncio.sleep(0.1)  # Brief pause for UI responsiveness
 
         original_content = current_files.get(filename, "")
 
@@ -164,81 +164,4 @@ class GenerationCoordinator:
 
             review_result = self.robust_parse_json_response(raw_response)
             if not review_result or not review_result.get("issues"):
-                self.log("success", "✅ Review complete. No issues found.")
-                return generated_files
-
-            self.log("warning", f"Review found {len(review_result['issues'])} issues. Applying fixes...")
-            self.event_bus.emit("agent_status_changed", "Surgeon", "Applying review fixes...", "fa5s.cut")
-
-            corrected_files = generated_files.copy()
-            for issue in review_result["issues"]:
-                filename = issue.get("filename")
-                corrected_code = issue.get("corrected_code")
-                start_line = issue.get("start_line")
-                end_line = issue.get("end_line")
-
-                if not all([filename, corrected_code is not None, isinstance(start_line, int), isinstance(end_line, int)]):
-                    continue
-
-                if filename not in corrected_files:
-                    continue
-
-                try:
-                    self.log("info", f"Applying fix to {filename}: {issue.get('description')}")
-                    original_content = corrected_files[filename]
-                    lines = original_content.splitlines(True)
-                    if original_content.endswith('\n') and (not lines or not lines[-1].endswith('\n')):
-                        lines.append('\n')
-                    start_idx = max(0, start_line - 1)
-                    end_idx = min(len(lines), end_line)
-                    self.event_bus.emit("highlight_lines_for_edit", filename, start_line, end_line)
-                    await asyncio.sleep(0.5)
-                    self.event_bus.emit("delete_highlighted_lines", filename)
-                    await asyncio.sleep(0.3)
-                    self.event_bus.emit("position_cursor_for_insert", filename, start_line, 0)
-                    await asyncio.sleep(0.1)
-                    if not corrected_code.endswith('\n'):
-                        corrected_code += '\n'
-                    await self._stream_content(filename, corrected_code)
-                    new_lines = lines[:start_idx] + corrected_code.splitlines(True) + lines[end_idx:]
-                    corrected_files[filename] = "".join(new_lines)
-                except Exception as e:
-                    self.log("error", f"Failed to apply review fix to {filename}: {e}")
-                    logger.exception(f"Surgical edit failed for {filename}")
-
-            return corrected_files
-        except Exception as e:
-            self.log("error", f"Review and Correct pass failed: {e}")
-            logger.exception("Exception in _perform_review_and_correct")
-            return generated_files
-
-    async def _stream_content(self, filename: str, content: str, clear_first: bool = False):
-        if clear_first:
-            self.event_bus.emit("code_generation_complete", {filename: ""})
-            await asyncio.sleep(0.1)
-        chunk_size = 50
-        for i in range(0, len(content), chunk_size):
-            chunk = content[i:i + chunk_size]
-            self.event_bus.emit("stream_code_chunk", filename, chunk)
-            await asyncio.sleep(0.01)
-
-    def robust_clean_llm_output(self, content: str) -> str:
-        content = content.strip()
-        code_block_regex = re.compile(r'```(?:[a-zA-Z0-9_]*)?\n(.*?)\n```', re.DOTALL)
-        matches = code_block_regex.findall(content)
-        if matches:
-            return "\n".join(m.strip() for m in matches)
-        return content
-
-    def robust_parse_json_response(self, response: str) -> Optional[Dict[str, Any]]:
-        match = re.search(r'\{.*}', response, re.DOTALL)
-        if not match:
-            return None
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None
-
-    def log(self, level: str, message: str, details: str = ""):
-        full_message = f"{message}\nDetails: {details}" if details else message
-        self.event_bus.emit("log_message_received", "GenerationCoordinator", level, full_message)
+                self.log("success", "✅ Review complete.
