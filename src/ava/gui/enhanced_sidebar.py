@@ -8,10 +8,6 @@ from src.ava.gui.components import Colors, Typography, ModernButton, StatusIndic
 from src.ava.core.event_bus import EventBus
 
 
-# REMOVE THE FOLLOWING LINE:
-# from src.ava.core.managers.window_manager import WindowManager
-
-
 class EnhancedSidebar(QWidget):
     def __init__(self, event_bus: EventBus):
         super().__init__()
@@ -160,6 +156,11 @@ class EnhancedSidebar(QWidget):
         code_viewer_btn.setIcon(qta.icon("fa5s.code", color=Colors.TEXT_PRIMARY.name()))
         code_viewer_btn.clicked.connect(lambda: self.event_bus.emit("show_code_viewer_requested"))
         layout.addWidget(code_viewer_btn)
+
+        visualizer_btn = ModernButton("Project Visualizer", "secondary")
+        visualizer_btn.setIcon(qta.icon("fa5s.project-diagram", color=Colors.TEXT_PRIMARY.name()))
+        visualizer_btn.clicked.connect(lambda: self.event_bus.emit("show_project_visualizer_requested"))
+        layout.addWidget(visualizer_btn)
 
         return panel
 

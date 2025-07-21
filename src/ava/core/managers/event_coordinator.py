@@ -194,6 +194,7 @@ class EventCoordinator:
 
         self.event_bus.subscribe("show_log_viewer_requested", self.window_manager.show_log_viewer)
         self.event_bus.subscribe("show_code_viewer_requested", self.window_manager.show_code_viewer)
+        self.event_bus.subscribe("show_project_visualizer_requested", self.window_manager.show_project_visualizer)
         logger.info("UI events wired.")
 
     def _wire_ai_workflow_events(self) -> None:
