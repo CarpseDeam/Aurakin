@@ -8,7 +8,7 @@ from src.ava.gui.code_viewer import CodeViewerWindow
 from src.ava.gui.model_config_dialog import ModelConfigurationDialog
 from src.ava.gui.plugin_management_dialog import PluginManagementDialog
 from src.ava.gui.log_viewer import LogViewerWindow
-from src.ava.gui.project_visualizer_window import ProjectVisualizerWindow
+from src.ava.gui.node_viewer.project_visualizer_window import ProjectVisualizerWindow
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient

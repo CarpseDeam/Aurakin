@@ -21,9 +21,6 @@ class GenerationCoordinator:
 
     def __init__(self, service_manager: Any, event_bus: EventBus, context_manager: Any,
                  import_fixer_service: Any, integration_validator: Any):
-        """
-        Initializes the GenerationCoordinator.
-        """
         self.service_manager = service_manager
         self.event_bus = event_bus
         self.context_manager = context_manager
@@ -81,15 +78,18 @@ class GenerationCoordinator:
             self.log("warning", f"Task '{task.get('description')}' has no filename. Skipping.")
             return current_files
 
+        # --- FIX: Emit the real-time event BEFORE generation starts ---
+        if filename not in current_files:
+            self.event_bus.emit("file_generation_starting", filename)
+            await asyncio.sleep(0.5) # Give the animation a moment to start
+
         original_content = current_files.get(filename, "")
 
         self.event_bus.emit("agent_status_changed", "Coder", f"Implementing: {task.get('description')}", "fa5s.code")
         snippet = await self._generate_code_snippet(task, current_files)
         if snippet is None:
-            self.log("error", f"Failed to generate code snippet for task: {task.get('description')}")
             snippet = f"\n# ERROR: Failed to generate code for task: {task.get('description')}\n"
 
-        # FIX: Ensure snippet for modification/insertion ends with a newline
         if task.get("type") != "create_file" and snippet and not snippet.endswith('\n'):
             snippet += '\n'
 
@@ -98,15 +98,12 @@ class GenerationCoordinator:
             await self._stream_content(filename, new_content, clear_first=True)
         else:
             lines = original_content.splitlines(True)
-            # Ensure lines has a trailing newline if the original content did
             if original_content.endswith('\n') and (not lines or not lines[-1].endswith('\n')):
                 lines.append('\n')
 
             start_line = task.get("start_line", 1)
             end_line = task.get("end_line", start_line)
-
             start_idx = max(0, start_line - 1)
-            # Make the end_idx inclusive for slicing
             end_idx = min(len(lines), end_line)
 
             self.event_bus.emit("highlight_lines_for_edit", filename, start_line, end_line)
@@ -145,7 +142,6 @@ class GenerationCoordinator:
         filename = task.get("filename")
         file_content = current_files.get(filename, "# This is a new file.")
         other_files_context = {k: v for k, v in current_files.items() if k != filename}
-
         return CODE_SNIPPET_GENERATOR_PROMPT.format(
             task_json=json.dumps(task, indent=2),
             filename=filename,
@@ -155,9 +151,7 @@ class GenerationCoordinator:
 
     async def _perform_review_and_correct(self, generated_files: Dict[str, str]) -> Dict[str, str]:
         self.event_bus.emit("agent_status_changed", "Reviewer", "Analyzing generated code...", "fa5s.search")
-
         prompt = REVIEWER_PROMPT.format(code_to_review_json=json.dumps(generated_files, indent=2))
-
         provider, model = self.llm_client.get_model_for_role("reviewer")
         if not provider or not model:
             self.log("error", "No model for 'reviewer' role. Skipping review pass.")
@@ -183,13 +177,10 @@ class GenerationCoordinator:
                 start_line = issue.get("start_line")
                 end_line = issue.get("end_line")
 
-                # FIX: Allow corrected_code to be an empty string by checking for `is not None`.
                 if not all([filename, corrected_code is not None, isinstance(start_line, int), isinstance(end_line, int)]):
-                    self.log("warning", f"Skipping invalid issue from review: {issue}")
                     continue
 
                 if filename not in corrected_files:
-                    self.log("warning", f"Reviewer wants to fix non-existent file '{filename}'. Skipping.")
                     continue
 
                 try:
@@ -198,31 +189,24 @@ class GenerationCoordinator:
                     lines = original_content.splitlines(True)
                     if original_content.endswith('\n') and (not lines or not lines[-1].endswith('\n')):
                         lines.append('\n')
-
                     start_idx = max(0, start_line - 1)
                     end_idx = min(len(lines), end_line)
-
                     self.event_bus.emit("highlight_lines_for_edit", filename, start_line, end_line)
                     await asyncio.sleep(0.5)
                     self.event_bus.emit("delete_highlighted_lines", filename)
                     await asyncio.sleep(0.3)
                     self.event_bus.emit("position_cursor_for_insert", filename, start_line, 0)
                     await asyncio.sleep(0.1)
-
                     if not corrected_code.endswith('\n'):
                         corrected_code += '\n'
                     await self._stream_content(filename, corrected_code)
-
                     new_lines = lines[:start_idx] + corrected_code.splitlines(True) + lines[end_idx:]
                     corrected_files[filename] = "".join(new_lines)
-                    self.log("success", f"Applied fix to {filename}.")
-
                 except Exception as e:
                     self.log("error", f"Failed to apply review fix to {filename}: {e}")
                     logger.exception(f"Surgical edit failed for {filename}")
 
             return corrected_files
-
         except Exception as e:
             self.log("error", f"Review and Correct pass failed: {e}")
             logger.exception("Exception in _perform_review_and_correct")
@@ -232,7 +216,6 @@ class GenerationCoordinator:
         if clear_first:
             self.event_bus.emit("code_generation_complete", {filename: ""})
             await asyncio.sleep(0.1)
-
         chunk_size = 50
         for i in range(0, len(content), chunk_size):
             chunk = content[i:i + chunk_size]
@@ -248,14 +231,12 @@ class GenerationCoordinator:
         return content
 
     def robust_parse_json_response(self, response: str) -> Optional[Dict[str, Any]]:
-        match = re.search(r'\{.*\}', response, re.DOTALL)
+        match = re.search(r'\{.*}', response, re.DOTALL)
         if not match:
-            self.log("error", "No JSON object found in reviewer response.", response)
             return None
         try:
             return json.loads(match.group(0))
-        except json.JSONDecodeError as e:
-            self.log("error", f"Failed to decode JSON from reviewer. Error: {e}. Content: '{match.group(0)[:200]}...'")
+        except json.JSONDecodeError:
             return None
 
     def log(self, level: str, message: str, details: str = ""):

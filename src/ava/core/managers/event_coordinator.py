@@ -64,7 +64,7 @@ class EventCoordinator:
         self._wire_chat_session_events()
         self._wire_status_bar_events()
         self._wire_lsp_events()
-        self._wire_flow_viewer_events()  # <-- NEW
+        self._wire_visualizer_events()
 
         # Allows plugins to request core manager instances for advanced operations.
         self.event_bus.subscribe(
@@ -74,26 +74,21 @@ class EventCoordinator:
 
         logger.info("All events wired successfully.")
 
-    def _wire_flow_viewer_events(self) -> None:
-        """Wire events for the FlowViewer to visualize agent status."""
+    def _wire_visualizer_events(self) -> None:
+        """Wire events for the real-time project visualizer."""
         if not self.window_manager:
             return
-        code_viewer = self.window_manager.get_code_viewer()
-        if not code_viewer or not hasattr(code_viewer, 'panel_manager'):
-            logger.warning("CodeViewer or PanelManager not available for FlowViewer event wiring.")
+        visualizer = self.window_manager.get_project_visualizer()
+        if not visualizer:
+            logger.warning("ProjectVisualizer not available for event wiring.")
             return
 
-        panel_manager = code_viewer.panel_manager
-        if not panel_manager or not hasattr(panel_manager, 'get_flow_viewer'):
-            logger.warning("PanelManager is missing 'get_flow_viewer' method.")
-            return
+        # Connect the plan generation from ArchitectService to the visualizer
+        self.event_bus.subscribe("project_plan_generated", visualizer._handle_project_plan_generated)
+        # Connect the file generation start from GenerationCoordinator to the visualizer
+        self.event_bus.subscribe("file_generation_starting", visualizer._handle_file_generation_starting)
 
-        flow_viewer = panel_manager.get_flow_viewer()
-        if flow_viewer and hasattr(flow_viewer, '_on_agent_status_changed'):
-            self.event_bus.subscribe("agent_status_changed", flow_viewer._on_agent_status_changed)
-            logger.info("FlowViewer agent status events wired.")
-        else:
-            logger.warning("FlowViewer not found or is missing '_on_agent_status_changed' method.")
+        logger.info("Project Visualizer events wired.")
 
     def _wire_lsp_events(self) -> None:
         """Wire events for the Language Server Protocol integration."""
