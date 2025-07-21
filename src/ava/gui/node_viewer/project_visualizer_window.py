@@ -1,184 +1,318 @@
 # src/ava/gui/node_viewer/project_visualizer_window.py
-"""
-A widget that visualizes the project structure as a node graph.
-
-This window listens for events related to the code generation process.
-It pre-calculates the positions of all file nodes based on the initial plan
-and then draws each node as it is about to be generated.
-"""
 import logging
 import math
-from typing import Dict, List, Optional, Set
-
-from PyQt6.QtCore import QPointF, Qt, pyqtSlot
-from PyQt6.QtGui import QBrush, QColor, QPainter
-from PyQt6.QtWidgets import QGraphicsScene, QGraphicsView, QVBoxLayout, QWidget
+from pathlib import Path
+from typing import Dict, List, Optional, Any
+from PySide6.QtCore import (
+    QPointF,
+    QRectF,
+    Qt,
+    QPropertyAnimation,
+    QEasingCurve,
+    QParallelAnimationGroup,
+    QTimer,
+)
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPolygonF,
+    QCloseEvent,
+)
+from PySide6.QtWidgets import (
+    QGraphicsObject,
+    QGraphicsPathItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QMainWindow,
+    QStyleOptionGraphicsItem,
+    QWidget,
+)
 
 from src.ava.core.event_bus import EventBus
+from src.ava.core.project_manager import ProjectManager
+from src.ava.gui.components import Colors
 from src.ava.gui.node_viewer.project_node import ProjectNode
 
 logger = logging.getLogger(__name__)
 
+# --- Layout Constants ---
+COLUMN_WIDTH = 300
+ROW_HEIGHT = 90
 
-class ProjectVisualizerWindow(QWidget):
-    """
-    A widget that visualizes the project structure as a node graph.
 
-    This window listens for events related to the code generation process.
-    It pre-calculates the positions of all file nodes based on the initial plan
-    and then draws each node as it is about to be generated.
-    """
+class ConnectionItem(QGraphicsPathItem):
+    """A directed connection line with an arrowhead, linking two nodes."""
 
-    def __init__(self, event_bus: EventBus, parent: Optional[QWidget] = None):
-        """
-        Initializes the ProjectVisualizerWindow.
+    def __init__(self, start_node: QGraphicsObject, end_node: QGraphicsObject):
+        super().__init__()
+        self.start_node = start_node
+        self.end_node = end_node
+        self.arrow_head = QPolygonF()
+        pen = QPen(QColor("#555"), 2.0, Qt.PenStyle.SolidLine)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        self.setPen(pen)
+        self.setZValue(-1)
+        self.update_path()
 
-        Args:
-            event_bus: The application's event bus for communication.
-            parent: The parent widget, if any.
-        """
-        super().__init__(parent)
+    def update_path(self) -> None:
+        start_pos = self.start_node.pos() + QPointF(self.start_node.boundingRect().width(),
+                                                    self.start_node.boundingRect().height() / 2)
+        end_pos = self.end_node.pos() + QPointF(0, self.end_node.boundingRect().height() / 2)
+
+        path = QPainterPath(start_pos)
+        offset = (end_pos.x() - start_pos.x()) * 0.5
+        c1 = QPointF(start_pos.x() + offset, start_pos.y())
+        c2 = QPointF(end_pos.x() - offset, end_pos.y())
+        path.cubicTo(c1, c2, end_pos)
+
+        self.setPath(path)
+        self._update_arrowhead(path, end_pos)
+
+    def _update_arrowhead(self, path: QPainterPath, end_point: QPointF) -> None:
+        angle_rad = math.radians(180 - path.angleAtPercent(1.0))
+        arrow_size = 10.0
+        arrow_p1 = end_point + QPointF(math.cos(angle_rad - math.pi / 6) * arrow_size,
+                                       math.sin(angle_rad - math.pi / 6) * arrow_size)
+        arrow_p2 = end_point + QPointF(math.cos(angle_rad + math.pi / 6) * arrow_size,
+                                       math.sin(angle_rad + math.pi / 6) * arrow_size)
+        self.arrow_head.clear()
+        self.arrow_head.append(end_point)
+        self.arrow_head.append(arrow_p1)
+        self.arrow_head.append(arrow_p2)
+
+    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        super().paint(painter, option, widget)
+        painter.setBrush(QBrush(QColor("#555")))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawPolygon(self.arrow_head)
+
+
+class ProjectVisualizerWindow(QMainWindow):
+    """The main window for the project visualizer."""
+
+    def __init__(self, event_bus: EventBus, project_manager: ProjectManager):
+        super().__init__()
         self.event_bus = event_bus
+        self.project_manager = project_manager
         self.nodes: Dict[str, ProjectNode] = {}
-        self.positions: Dict[str, QPointF] = {}
+        self._positions: Dict[str, QPointF] = {}
 
-        self._init_ui()
-        self._connect_events()
-
-    def _init_ui(self) -> None:
-        """Sets up the user interface components of the widget."""
         self.setWindowTitle("Project Visualizer")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
+        self.setGeometry(150, 150, 1200, 800)
         self.scene = QGraphicsScene()
-        self.scene.setBackgroundBrush(QBrush(QColor("#2c313c")))
-
+        self.scene.setBackgroundBrush(QColor(Colors.PRIMARY_BG))
         self.view = QGraphicsView(self.scene)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
-        self.view.setTransformationAnchor(
-            QGraphicsView.ViewportAnchor.AnchorUnderMouse
-        )
-        self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter)
+        self.setCentralWidget(self.view)
 
-        layout.addWidget(self.view)
+        self.event_bus.subscribe("project_plan_generated", self.handle_project_plan_generated)
+        self.event_bus.subscribe("project_root_selected", self.display_existing_project)
+        self.event_bus.subscribe("workflow_finalized", lambda final_code: self.display_existing_project(
+            self.project_manager.active_project_path))
+        self.event_bus.subscribe("file_generation_starting", self._handle_file_generation_starting)
 
-    def _connect_events(self) -> None:
-        """Connects widget slots to events from the event bus."""
-        self.event_bus.subscribe("architect_plan_updated", self.prepare_visualization)
-        self.event_bus.subscribe("file_generation_starting", self.draw_node)
-        self.event_bus.subscribe("generation_session_started", self.clear_visualization)
+    def handle_project_plan_generated(self, plan: Dict[str, Any]) -> None:
+        if not self.project_manager.active_project_path: return
+        self.log("info", "Visualizer received project plan. Calculating node layout.")
 
-    @pyqtSlot()
-    def clear_visualization(self) -> None:
+        root_path = self.project_manager.active_project_path
+        if str(root_path) not in self.nodes:
+            self.display_existing_project(str(root_path))
+
+        all_filenames = [t['filename'] for t in plan.get("tasks", []) if 'filename' in t]
+        tree = self._build_tree_from_paths(all_filenames)
+
+        self._positions = self._calculate_node_positions(tree, root_path)
+        self.log("info", f"Calculated positions for {len(self._positions)} nodes.")
+
+    # --- THIS IS THE CORRECTED METHOD ---
+    def _handle_file_generation_starting(self, filename: str) -> None:
         """
-        Clears the entire visualization, removing all nodes and resetting state.
+        Draws a single node, ensuring its parent directories are drawn first.
         """
-        logger.info("Clearing project visualization.")
+        self.log("info", f"Visualizer received signal to draw node: {filename}")
+        if not self.project_manager.active_project_path: return
+
+        # Create the full path for the file/folder to be drawn
+        full_path = self.project_manager.active_project_path / filename
+
+        # --- NEW LOGIC TO CREATE PARENT FOLDERS ---
+        # Get all parent directories, starting from the one closest to the root.
+        parents = list(reversed(full_path.parent.parents))
+        # Add the immediate parent to the list as well.
+        parents.append(full_path.parent)
+
+        current_parent_node = self.nodes.get(str(self.project_manager.active_project_path))
+        if not current_parent_node:
+            self.log("error", "Root project node is missing. Cannot draw children.")
+            return
+
+        for parent_dir in parents:
+            # Skip the root project path itself, as it's already the starting parent.
+            if parent_dir == self.project_manager.active_project_path:
+                continue
+
+            parent_dir_str = str(parent_dir)
+            if parent_dir_str not in self.nodes:
+                # This parent folder node does not exist, so we must create it.
+                folder_node = ProjectNode(parent_dir.name, parent_dir_str, True)
+                self.nodes[parent_dir_str] = folder_node
+                self.scene.addItem(folder_node)
+
+                if parent_dir_str in self._positions:
+                    folder_node.setPos(self._positions[parent_dir_str])
+
+                self._draw_connection(current_parent_node, folder_node)
+                current_parent_node = folder_node  # The newly created folder is the parent for the next iteration.
+            else:
+                # The node already exists, so just update our reference to it.
+                current_parent_node = self.nodes[parent_dir_str]
+        # --- END OF NEW LOGIC ---
+
+        # Now, create the final file node itself
+        full_path_str = str(full_path)
+        if full_path_str not in self.nodes:
+            # Determine if the target itself is a folder
+            is_folder = any(p.startswith(full_path_str + '/') for p in self._positions.keys())
+
+            node = ProjectNode(full_path.name, full_path_str, is_folder)
+            self.nodes[full_path_str] = node
+            self.scene.addItem(node)
+
+            if full_path_str in self._positions:
+                node.setPos(self._positions[full_path_str])
+            else:
+                self.log("error", f"No position calculated for {filename}!")
+                node.setPos(current_parent_node.pos() + QPointF(50, 50))
+
+            self._draw_connection(current_parent_node, node)
+            self._fit_view_with_padding()
+
+    def display_existing_project(self, project_path_str: str) -> None:
+        root_path = Path(project_path_str)
+        if not root_path.is_dir(): return
+
+        self._clear_scene()
+        tree = self._scan_directory_for_tree(root_path)
+        self._positions = self._calculate_node_positions(tree, root_path)
+
+        root_node = ProjectNode(root_path.name, str(root_path), True)
+        self.nodes[str(root_path)] = root_node
+        self.scene.addItem(root_node)
+        root_node.setPos(self._positions[str(root_path)])
+
+        self._create_nodes_recursively(tree, root_path, root_node)
+        QTimer.singleShot(50, self._fit_view_with_padding)
+
+    def _create_nodes_recursively(self, subtree: Dict, parent_path: Path, parent_node: QGraphicsObject) -> None:
+        sorted_children = sorted(subtree.items(), key=lambda item: not bool(item[1]))
+        for name, children in sorted_children:
+            current_path = parent_path / name
+            current_path_str = str(current_path)
+            is_folder = bool(children)
+
+            node = ProjectNode(name, current_path_str, is_folder)
+            self.nodes[current_path_str] = node
+            self.scene.addItem(node)
+            node.setPos(self._positions[current_path_str])
+            self._draw_connection(parent_node, node)
+
+            if children:
+                self._create_nodes_recursively(children, current_path, node)
+
+    def _clear_scene(self) -> None:
         self.scene.clear()
         self.nodes.clear()
-        self.positions.clear()
+        self._positions.clear()
 
-    @pyqtSlot(dict)
-    def prepare_visualization(self, plan: Dict) -> None:
-        """
-        Pre-calculates node positions based on the architect's plan.
+    def _fit_view_with_padding(self) -> None:
+        rect = self.scene.itemsBoundingRect()
+        if not rect.isValid(): return
+        padding = 150
+        rect.adjust(-padding, -padding, padding, padding)
+        self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
-        This method is triggered when a new plan is available. It extracts all
-        unique filenames from the plan tasks and calculates a layout for them
-        without drawing them yet.
+    def _draw_connection(self, start_node: QGraphicsObject, end_node: QGraphicsObject) -> ConnectionItem:
+        connection = ConnectionItem(start_node, end_node)
+        self.scene.addItem(connection)
+        start_node.add_connection(connection, is_outgoing=True)
+        end_node.add_connection(connection, is_outgoing=False)
+        return connection
 
-        Args:
-            plan: The architect's plan dictionary.
-        """
-        self.clear_visualization()
-        logger.info("Preparing visualization from new architect plan.")
+    def _build_tree_from_paths(self, paths: List[str]) -> Dict:
+        tree = {}
+        all_paths = set(paths)
+        for p_str in paths:
+            p = Path(p_str)
+            for parent in p.parents:
+                if str(parent) != '.':
+                    all_paths.add(str(parent))
 
-        tasks = plan.get("tasks", [])
-        if not tasks:
-            logger.warning("Plan received with no tasks. Nothing to visualize.")
-            return
+        for p in sorted(list(all_paths)):
+            parts = Path(p).parts
+            if not parts: continue
+            level = tree
+            for part in parts:
+                if part not in level: level[part] = {}
+                level = level[part]
+        return tree
 
-        filenames: Set[str] = {
-            task["filename"] for task in tasks if "filename" in task
-        }
-        if not filenames:
-            logger.warning("No filenames found in plan tasks. Nothing to visualize.")
-            return
-
-        self.positions = self._calculate_node_positions(list(filenames))
-        logger.info(f"Pre-calculated positions for {len(self.positions)} nodes.")
-        # Center the view on the calculated layout
-        self.view.fitInView(
-            self.scene.itemsBoundingRect(), Qt.AspectRatioMode.KeepAspectRatio
-        )
-
-    def _calculate_node_positions(
-        self, filenames: List[str]
-    ) -> Dict[str, QPointF]:
-        """
-        Calculates positions for a list of nodes in a circular layout.
-
-        Args:
-            filenames: A list of unique filenames to be placed.
-
-        Returns:
-            A dictionary mapping each filename to its calculated QPointF position.
-        """
-        positions: Dict[str, QPointF] = {}
-        count = len(filenames)
-        if count == 0:
+    def _scan_directory_for_tree(self, root_path: Path) -> Dict:
+        tree = {}
+        ignore_dirs = {'.git', '__pycache__', '.venv', 'venv', 'rag_db', '.ava_sessions'}
+        try:
+            for item in sorted(root_path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
+                if item.name in ignore_dirs:
+                    continue
+                if item.is_dir():
+                    tree[item.name] = self._scan_directory_for_tree(item)
+                else:
+                    tree[item.name] = {}
+        except FileNotFoundError:
             return {}
-        if count == 1:
-            return {filenames[0]: QPointF(0, 0)}
+        return tree
 
-        # Dynamic radius to give more space for more nodes
-        radius = max(200.0, count * 30.0)
+    def _calculate_node_positions(self, tree: Dict, root_path: Path) -> Dict[str, QPointF]:
+        positions = {}
 
-        for i, filename in enumerate(filenames):
-            angle = (2 * math.pi * i) / count
-            x = radius * math.cos(angle)
-            y = radius * math.sin(angle)
-            positions[filename] = QPointF(x, y)
+        def get_subtree_leaf_count(subtree: Dict) -> int:
+            if not subtree: return 1
+            return sum(get_subtree_leaf_count(children) for children in subtree.values())
 
+        def layout_recursively(subtree: Dict, parent_path: Path, parent_center_y: float, depth: int):
+            sorted_children = sorted(subtree.items(), key=lambda item: not bool(item[1]))
+
+            total_height = sum(get_subtree_leaf_count(children) * ROW_HEIGHT for name, children in sorted_children)
+            current_y = parent_center_y - total_height / 2
+
+            for name, children in sorted_children:
+                item_path = parent_path / name
+                leaf_count = get_subtree_leaf_count(children)
+                node_height = leaf_count * ROW_HEIGHT
+                child_center_y = current_y + node_height / 2
+                positions[str(item_path)] = QPointF(depth * COLUMN_WIDTH, child_center_y)
+                if children:
+                    layout_recursively(children, item_path, child_center_y, depth + 1)
+                current_y += node_height
+
+        root_pos = QPointF(-COLUMN_WIDTH, 0)
+        positions[str(root_path)] = root_pos
+        layout_recursively(tree, root_path, root_pos.y(), 0)
         return positions
 
-    @pyqtSlot(dict)
-    def draw_node(self, event_data: Dict) -> None:
-        """
-        Draws a single pre-calculated node on the scene.
+    def show(self) -> None:
+        super().show()
+        self.activateWindow()
+        self.raise_()
 
-        This slot is triggered by the 'file_generation_starting' event. It finds
-        the pre-calculated position for the given filename and adds the
-        corresponding node to the scene.
+    def closeEvent(self, event: QCloseEvent) -> None:
+        event.ignore()
+        self.hide()
 
-        Args:
-            event_data: The event payload, expected to contain a 'filename' key.
-        """
-        filename = event_data.get("filename")
-        if not filename:
-            logger.warning(
-                "Received 'file_generation_starting' event with no filename."
-            )
-            return
-
-        if filename in self.nodes:
-            logger.debug(f"Node for {filename} already drawn. Skipping.")
-            return
-
-        if filename in self.positions:
-            logger.info(f"Drawing node for: {filename}")
-            position = self.positions[filename]
-            node = ProjectNode(filename)
-            node.setPos(position)
-            self.scene.addItem(node)
-            self.nodes[filename] = node
-
-            # Recenter view if it's the first node
-            if len(self.nodes) == 1:
-                self.view.centerOn(node)
-        else:
-            logger.warning(
-                f"No pre-calculated position found for {filename}. Cannot draw node."
-            )
+    def log(self, level: str, message: str):
+        self.event_bus.emit("log_message_received", "ProjectVisualizer", level, message)

@@ -7,10 +7,10 @@
     "reviewer": "google/gemini-2.5-flash"
   },
   "role_temperatures": {
-    "architect": 0.7,
+    "architect": 0.35,
     "coder": 0.1,
     "filler": 0.1,
     "chat": 0.7,
-    "reviewer": 0.7
+    "reviewer": 0.25
   }
 }

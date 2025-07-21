@@ -62,10 +62,7 @@ class ActionService:
         await rag_manager.switch_project_context(project_path)
         app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
 
-        # --- THIS IS THE FIX ---
-        # Explicitly tell the visualizer to draw the new project root.
         self.event_bus.emit("project_root_selected", project_path_str)
-        # --- END FIX ---
 
         if lsp_client:
             asyncio.create_task(lsp_client.initialize_session())
@@ -73,6 +70,10 @@ class ActionService:
         if self.window_manager:
             chat_interface = self.window_manager.get_main_window().chat_interface
             if chat_interface:
+                # --- THIS IS THE FIX ---
+                # Explicitly clear the chat history from memory before loading the new session.
+                chat_interface.clear_chat("New project created. Let's build something!")
+                # --- END OF FIX ---
                 chat_interface.set_project_manager(project_manager)
                 chat_interface.load_project_session()
 
@@ -97,7 +98,6 @@ class ActionService:
                 self.log("info", f"Starting modification session on branch: {branch_name}")
                 app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
 
-                # --- FIX: Explicitly tell the visualizer to draw the loaded project ---
                 self.event_bus.emit("project_root_selected", project_path_str)
 
                 if lsp_client:
