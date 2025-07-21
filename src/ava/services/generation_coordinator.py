@@ -89,6 +89,10 @@ class GenerationCoordinator:
             self.log("error", f"Failed to generate code snippet for task: {task.get('description')}")
             snippet = f"\n# ERROR: Failed to generate code for task: {task.get('description')}\n"
 
+        # FIX: Ensure snippet for modification/insertion ends with a newline
+        if task.get("type") != "create_file" and snippet and not snippet.endswith('\n'):
+            snippet += '\n'
+
         if task.get("type") == "create_file":
             new_content = snippet
             await self._stream_content(filename, new_content, clear_first=True)
@@ -112,9 +116,6 @@ class GenerationCoordinator:
             self.event_bus.emit("position_cursor_for_insert", filename, start_line, 0)
             await asyncio.sleep(0.1)
 
-            # Ensure snippet ends with a newline if it's being inserted between lines
-            if not snippet.endswith('\n'):
-                snippet += '\n'
             await self._stream_content(filename, snippet)
 
             new_lines = lines[:start_idx] + snippet.splitlines(True) + lines[end_idx:]
@@ -182,7 +183,8 @@ class GenerationCoordinator:
                 start_line = issue.get("start_line")
                 end_line = issue.get("end_line")
 
-                if not all([filename, corrected_code, isinstance(start_line, int), isinstance(end_line, int)]):
+                # FIX: Allow corrected_code to be an empty string by checking for `is not None`.
+                if not all([filename, corrected_code is not None, isinstance(start_line, int), isinstance(end_line, int)]):
                     self.log("warning", f"Skipping invalid issue from review: {issue}")
                     continue
 
