@@ -84,11 +84,14 @@ class EventCoordinator:
             logger.warning("ProjectVisualizer not available for event wiring.")
             return
 
-        self.event_bus.subscribe("project_plan_generated", visualizer.handle_project_plan_generated)
+        # The ONLY event the visualizer needs for generation now is the scaffold.
+        self.event_bus.subscribe("project_scaffold_generated", visualizer.display_scaffold)
+
+        # These events are for loading existing projects or refreshing after completion.
         self.event_bus.subscribe("project_root_selected", visualizer.display_existing_project)
         self.event_bus.subscribe("workflow_finalized", lambda final_code: visualizer.display_existing_project(
             self.service_manager.project_manager.active_project_path))
-        self.event_bus.subscribe("file_generation_starting", visualizer._handle_file_generation_starting)
+
         logger.info("Project Visualizer events wired.")
 
     def _wire_lsp_events(self) -> None:
@@ -195,15 +198,17 @@ class EventCoordinator:
         """Wire events related to the AI code generation workflow."""
         if self.workflow_manager:
             self.event_bus.subscribe("user_request_submitted", self.workflow_manager.handle_user_request)
-            # --- THIS IS THE FIX ---
-            # The line causing the crash has been removed.
-            # --- END OF FIX ---
         else:
             logger.warning("AI Workflow Event Wiring: WorkflowManager not available.")
 
         code_viewer = self.window_manager.get_code_viewer() if self.window_manager else None
         if code_viewer and hasattr(code_viewer, 'editor_manager'):
             editor_manager = code_viewer.editor_manager
+
+            # --- NEW: Connect scaffold and update events ---
+            self.event_bus.subscribe("project_scaffold_generated", code_viewer.display_scaffold)
+            self.event_bus.subscribe("file_content_updated", editor_manager.create_or_update_tab)
+
             self.event_bus.subscribe("prepare_for_generation", code_viewer.prepare_for_generation)
             self.event_bus.subscribe("stream_code_chunk", editor_manager.stream_content_to_editor)
             self.event_bus.subscribe("highlight_lines_for_edit", editor_manager.handle_highlight_lines)

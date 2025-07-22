@@ -3,25 +3,29 @@ import asyncio
 import json
 import logging
 import re
-from typing import Dict, Any, Optional, List
+import ast
+from typing import Dict, Any, Optional, List, Tuple
 
 from src.ava.core.event_bus import EventBus
-from src.ava.prompts.coder import MASTER_CODER_PROMPT
+from src.ava.prompts import ARCHITECT_SCAFFOLD_PROMPT, CODER_FILL_PROMPT
 
 logger = logging.getLogger(__name__)
 
 
 class GenerationCoordinator:
     """
-    Orchestrates the 'Architect (Plan) -> Coder -> Architect (Review)' workflow.
+    Orchestrates the new "Serial Scaffolding" workflow.
+    Phase 1: Architect builds the project skeleton.
+    Phase 2: Coders fill in function bodies serially.
+    Phase 3: Architect performs a final review.
     """
 
     def __init__(self, service_manager: Any, event_bus: EventBus):
         self.service_manager = service_manager
         self.event_bus = event_bus
         self.llm_client = service_manager.get_llm_client()
-        self.project_indexer = service_manager.get_project_indexer_service()
         self.original_user_request = ""
+        self.original_plan = {}
 
     async def coordinate_generation(
             self,
@@ -29,78 +33,123 @@ class GenerationCoordinator:
             existing_files: Optional[Dict[str, str]],
             user_request: str,
     ) -> Optional[Dict[str, str]]:
-        """
-        Executes the lean 3-step generation pipeline.
-        """
+        """Executes the new three-phase generation pipeline."""
         self.original_user_request = user_request
-        self.log("info", "🚀 Starting Lean Generation Assembly Line...")
-        session_files = (existing_files or {}).copy()
-        tasks = plan.get("tasks", [])
+        self.original_plan = plan
 
-        # 1. Handle non-code files from the plan
-        for task in tasks:
-            if task.get("type") == "create_file_with_content":
-                filename, content = task.get("filename"), task.get("content")
-                if filename and content is not None:
-                    session_files[filename] = content
-                    await self._stream_content(filename, content)
-
-        # 2. Coder Stage
-        coded_files = await self._execute_coder_stage(tasks, session_files)
-        if coded_files is None:
+        # --- PHASE 1: ARCHITECT BUILDS THE SCAFFOLD ---
+        scaffold_files = await self._execute_scaffold_phase()
+        if not scaffold_files:
+            self.log("error", "Scaffolding phase failed. Aborting generation.")
             return None
 
-        # 3. Architect Review Stage
-        reviewed_files = await self._execute_review_stage(coded_files)
+        # --- PHASE 2: CODERS FILL THE SCAFFOLD SERIALLY ---
+        implemented_files = await self._execute_fill_phase(scaffold_files)
+        if not implemented_files:
+            self.log("error", "Implementation phase failed. Aborting generation.")
+            return None
+
+        # --- PHASE 3: ARCHITECT REVIEWS THE FINAL PRODUCT ---
+        reviewed_files = await self._execute_review_stage(implemented_files)
         if reviewed_files is None:
-            self.log("warning", "Review stage failed. Returning code from Coder stage.")
-            return coded_files
+            self.log("warning", "Review stage failed. Returning implemented code as-is.")
+            return implemented_files
 
-        # 4. Handle file deletions
-        final_files = reviewed_files.copy()
-        for task in tasks:
-            if task.get("type") == "delete_file" and (filename := task.get("filename")):
-                final_files[filename] = None  # Sentinel for deletion
+        self.log("success", "✅ Scaffolding Workflow Finished Successfully.")
+        return reviewed_files
 
-        self.log("success", "✅ Assembly Line Finished.")
-        return final_files
+    async def _execute_scaffold_phase(self) -> Optional[Dict[str, str]]:
+        """Calls the Architect to generate the empty project skeleton."""
+        self.log("info", "--- Phase 1: Architect is building the project skeleton... ---")
+        self.event_bus.emit("agent_status_changed", "Architect", "Designing project skeleton...",
+                            "fa5s.drafting-compass")
 
-    async def _execute_coder_stage(self, tasks: List[Dict], initial_files: Dict) -> Optional[Dict]:
-        self.log("info", "--- Stage 1: Coder ---")
-        session_files = initial_files.copy()
+        prompt = ARCHITECT_SCAFFOLD_PROMPT.format(user_request=self.original_user_request)
+        scaffold_json = await self._call_architect_llm(prompt)
 
-        project_root = self.service_manager.project_manager.active_project_path
-        symbol_index = self.project_indexer.build_index(project_root) if project_root else {}
-        symbol_index_json = json.dumps(symbol_index, indent=2)
+        if not scaffold_json or not isinstance(scaffold_json, dict):
+            self.log("error", "Architect failed to return a valid JSON object for the scaffold.")
+            return None
 
-        code_tasks = [t for t in tasks if t.get("type") in ["create_file", "modify_file"]]
-        for i, task in enumerate(code_tasks):
-            filename, description = task["filename"], task["description"]
-            self.event_bus.emit("agent_status_changed", "Coder", f"({i + 1}/{len(code_tasks)}) Writing: {filename}",
-                                "fa5s.code")
-            self.event_bus.emit("file_generation_starting", filename)
+        self.event_bus.emit("project_scaffold_generated", scaffold_json)
+        await asyncio.sleep(0.5)
+        return scaffold_json
 
-            original_code_section = ""
-            if task["type"] == "modify_file":
-                original_code = session_files.get(filename, "")
-                original_code_section = f"**ORIGINAL CODE:**\n```python\n{original_code}\n```"
+    async def _execute_fill_phase(self, scaffold_files: Dict[str, str]) -> Optional[Dict[str, str]]:
+        """Parses the scaffold and calls Coders serially to fill function bodies."""
+        self.log("info", "--- Phase 2: Coder agents deploying serially... ---")
 
-            prompt = MASTER_CODER_PROMPT.format(
-                filename=filename, description=description, original_code_section=original_code_section,
-                code_context_json=json.dumps(session_files, indent=2), symbol_index_json=symbol_index_json
+        tasks_to_fill = self._find_functions_to_fill(scaffold_files)
+        if not tasks_to_fill:
+            self.log("warning", "No functions with 'pass' found to be filled in the scaffold.")
+            return scaffold_files
+
+        project_scaffold_json = json.dumps(scaffold_files, indent=2)
+        implemented_code = scaffold_files.copy()
+
+        for i, (filename, func_def) in enumerate(tasks_to_fill):
+            self.log("info",
+                     f"Coder starting task ({i + 1}/{len(tasks_to_fill)}): Implement {func_def['name']} in {filename}")
+            self.event_bus.emit("agent_status_changed", "Coder",
+                                f"({i + 1}/{len(tasks_to_fill)}) Implementing {func_def['name']}", "fa5s.code")
+
+            prompt = CODER_FILL_PROMPT.format(
+                project_scaffold=project_scaffold_json,
+                filename=filename,
+                function_signature=func_def['signature'],
+                function_description=func_def['description']
             )
-            code = await self._call_llm_agent(prompt, "coder")
-            if code is None:
-                self.log("error", f"Coder agent failed for {filename}. Aborting.")
-                return None
-            session_files[filename] = code
-            await self._stream_content(filename, code, clear_first=True)
+            function_body = await self._call_llm_agent(prompt, "coder")
 
-        return session_files
+            if function_body:
+                # Indent the new body to match the function's indentation level
+                indentation = ' ' * func_def['col_offset']
+                indented_body = "\n".join([f"{indentation}{line}" for line in function_body.splitlines()])
+
+                # Robustly replace the 'pass' statement
+                original_function_text = func_def['full_text']
+                pass_statement = f"{' ' * func_def['col_offset']}pass"
+                new_function_text = original_function_text.replace(pass_statement, indented_body, 1)
+
+                implemented_code[filename] = implemented_code[filename].replace(original_function_text,
+                                                                                new_function_text)
+
+                self.event_bus.emit("file_content_updated", filename, implemented_code[filename])
+                await asyncio.sleep(0.2)  # Stagger UI updates
+            else:
+                self.log("warning",
+                         f"Coder failed to provide a body for {func_def['name']} in {filename}. 'pass' will be kept.")
+
+        return implemented_code
+
+    def _find_functions_to_fill(self, scaffold_files: Dict[str, str]) -> List[Tuple[str, Dict[str, Any]]]:
+        """Uses AST to find functions with only a 'pass' statement."""
+        fill_tasks = []
+        plan_tasks_by_file = {task['filename']: task for task in self.original_plan.get("tasks", [])}
+
+        for filename, content in scaffold_files.items():
+            try:
+                tree = ast.parse(content)
+                for node in ast.walk(tree):
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
+                            task_info = plan_tasks_by_file.get(filename, {})
+                            func_def = {
+                                "name": node.name,
+                                "signature": ast.get_source_segment(content, node).split(':\n')[0],
+                                "description": task_info.get("description", f"Implement the {node.name} function."),
+                                "full_text": ast.get_source_segment(content, node),
+                                "col_offset": node.body[0].col_offset
+                            }
+                            fill_tasks.append((filename, func_def))
+            except Exception as e:
+                self.log("error", f"Failed to parse scaffold file {filename}: {e}")
+        return fill_tasks
 
     async def _execute_review_stage(self, files_to_review: Dict) -> Optional[Dict]:
-        self.log("info", "--- Stage 2: Architect (Review) ---")
-        self.event_bus.emit("agent_status_changed", "Architect", "Reviewing all files...", "fa5s.search")
+        """The existing review stage, now acting as a final check."""
+        self.log("info", "--- Phase 3: Architect is performing final integration review... ---")
+        self.event_bus.emit("agent_status_changed", "Architect", "Final review...", "fa5s.search")
 
         architect = self.service_manager.get_architect_service()
         fixes_plan = await architect.review_and_fix(self.original_user_request, json.dumps(files_to_review, indent=2))
@@ -110,13 +159,14 @@ class GenerationCoordinator:
             return files_to_review
 
         if fixes := fixes_plan.get("fixes"):
-            self.log("info", f"Architect found {len(fixes)} issues. Applying fixes...")
-            return await self._apply_surgical_edits(files_to_review, fixes, "Architect")
+            self.log("info", f"Architect found {len(fixes)} issues. Applying final fixes...")
+            return await self._apply_animated_surgical_edits(files_to_review, fixes)
 
-        self.log("success", "Architect found no issues in review.")
+        self.log("success", "Architect review complete. No issues found.")
         return files_to_review
 
-    async def _apply_surgical_edits(self, original_files: Dict, edits: List[Dict], agent_name: str) -> Dict:
+    async def _apply_animated_surgical_edits(self, original_files: Dict, edits: List[Dict]) -> Dict:
+        """Applies fixes with the slick UI animation."""
         modified_files = original_files.copy()
         for edit in edits:
             filename = edit.get("filename")
@@ -129,78 +179,58 @@ class GenerationCoordinator:
                 continue
 
             if filename not in modified_files:
-                self.log("warning", f"{agent_name} tried to edit non-existent file: {filename}")
+                self.log("warning", f"Reviewer tried to edit non-existent file: {filename}")
                 continue
 
-            self.log("info", f"Applying animated fix to {filename} at lines {start}-{end}")
-
-            # --- RESTORED ANIMATION LOGIC ---
-            # 1. Highlight the lines to be replaced
             self.event_bus.emit("highlight_lines_for_edit", filename, start, end)
-            await asyncio.sleep(0.75)  # Let the user see the highlight
-
-            # 2. Delete the highlighted lines
+            await asyncio.sleep(0.75)
             self.event_bus.emit("delete_highlighted_lines", filename)
-            await asyncio.sleep(0.4)  # Let the user see the deletion
+            await asyncio.sleep(0.4)
 
-            # 3. Position cursor and stream in the new code
-            # We need to re-read the file content *after* the deletion to position the cursor correctly
-            current_content_lines = modified_files[filename].splitlines()
-            # The line number where the insertion will start is the original start line
-            # (adjusting for 0-based index)
-            insertion_line = start - 1
-            # Calculate the column - usually the indentation of that line
-            indentation = len(current_content_lines[insertion_line]) - len(
-                current_content_lines[insertion_line].lstrip())
-
-            # Position the cursor
-            self.event_bus.emit("position_cursor_for_insert", filename, start, indentation)
-            await asyncio.sleep(0.1)
-
-            # Stream the corrected code to the cursor position
-            await self._stream_content(filename, corrected_code, clear_first=False)
-
-            # Update the in-memory version of the file for the next agent
+            # After deletion, we need to update the in-memory content
             lines = modified_files[filename].splitlines()
-            lines[start - 1:end] = corrected_code.splitlines()
-            modified_files[filename] = "\n".join(lines)
+            del lines[start - 1:end]
+
+            # Insert new code at the correct position
+            lines[start - 1:start - 1] = corrected_code.splitlines()
+            final_content = "\n".join(lines)
+            modified_files[filename] = final_content
+            self.event_bus.emit("file_content_updated", filename, final_content)
+            await asyncio.sleep(0.2)
 
         return modified_files
 
-    async def _call_llm_agent(self, prompt: str, role: str) -> Optional[str]:
+    async def _call_architect_llm(self, prompt: str) -> Optional[Dict[str, Any]]:
+        """Helper to call the architect and parse its JSON response."""
+        raw_response = await self._call_llm_agent(prompt, "architect", stream=False)
+        if not raw_response: return None
+        try:
+            match = re.search(r"\{.*\}", raw_response, re.DOTALL)
+            if not match: raise ValueError("No JSON object found in Architect's response.")
+            return json.loads(match.group(0))
+        except (json.JSONDecodeError, ValueError) as e:
+            self.log("error", f"Architect response was not valid JSON: {e}\nResponse: {raw_response[:500]}")
+            return None
+
+    async def _call_llm_agent(self, prompt: str, role: str, stream: bool = True) -> Optional[str]:
+        """Generic LLM call helper."""
         provider, model = self.llm_client.get_model_for_role(role)
         if not provider or not model:
-            self.log("error", f"No model configured for role '{role}'")
+            self.log("error", f"No model configured for role '{role}'");
             return None
-        raw_response = ""
+
+        response_content = ""
         try:
-            stream = self.llm_client.stream_chat(provider, model, prompt, role)
-            async for chunk in stream:
-                raw_response += chunk
+            async for chunk in self.llm_client.stream_chat(provider, model, prompt, role):
+                response_content += chunk
 
-            match = re.search(r"```(?:[a-zA-Z0-9_]*)?\n(.*?)\n```", raw_response, re.DOTALL)
-            if match:
-                return match.group(1).strip()
-            else:
-                self.log("warning",
-                         f"LLM for role '{role}' did not return code in a markdown block. Using raw response.")
-                return raw_response.strip()
-
+            if role == "coder":
+                match = re.search(r"```(?:[a-zA-Z0-9_]*)?\n(.*?)\n```", response_content, re.DOTALL)
+                return match.group(1).strip() if match else response_content.strip()
+            return response_content
         except Exception as e:
-            self.log("error", f"Error streaming from LLM for role '{role}': {e}", exc_info=True)
+            self.log("error", f"Error from LLM for role '{role}': {e}", exc_info=True);
             return None
-
-    async def _stream_content(self, filename: str, content: str, clear_first: bool = False):
-        if clear_first:
-            # An empty string signals the editor to clear its content
-            self.event_bus.emit("stream_code_chunk", filename, "")
-            await asyncio.sleep(0.05)  # Brief pause to ensure UI processes the clear
-
-        # Stream the actual content
-        for i in range(0, len(content), 50):
-            chunk = content[i:i + 50]
-            self.event_bus.emit("stream_code_chunk", filename, chunk)
-            await asyncio.sleep(0.01)
 
     def log(self, level: str, message: str, **kwargs):
         self.event_bus.emit("log_message_received", "GenCoordinator", level, message, **kwargs)

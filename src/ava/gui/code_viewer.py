@@ -227,6 +227,18 @@ class CodeViewerWindow(QMainWindow):
             # Pass the relative filename directly; the manager will handle it.
             self.editor_manager.create_or_update_tab(filename, content)
 
+    def display_scaffold(self, scaffold_files: dict):
+        """NEW: Displays the entire project scaffold at once."""
+        logger.info(f"[CodeViewer] Displaying {len(scaffold_files)} scaffold file(s).")
+        self.show_window()
+        if self.file_tree_manager and self.project_manager.active_project_path:
+            self.file_tree_manager.setup_new_project_tree(
+                self.project_manager.active_project_path,
+                list(scaffold_files.keys())
+            )
+        self.display_code(scaffold_files)
+
+
     def _on_file_selected(self, file_path: Path) -> None:
         """Callback for when a file is selected in the file tree."""
         self.editor_manager.open_file_in_tab(file_path)

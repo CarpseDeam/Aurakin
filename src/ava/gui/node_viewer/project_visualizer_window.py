@@ -107,70 +107,25 @@ class ProjectVisualizerWindow(QMainWindow):
         self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setCentralWidget(self.view)
 
-        self.event_bus.subscribe("project_plan_generated", self.handle_project_plan_generated)
-        self.event_bus.subscribe("project_root_selected", self.display_existing_project)
-        self.event_bus.subscribe("workflow_finalized", lambda final_code: self.display_existing_project(
-            self.project_manager.active_project_path))
-        self.event_bus.subscribe("file_generation_starting", self._handle_file_generation_starting)
-
-    def handle_project_plan_generated(self, plan: Dict[str, Any]) -> None:
+    def display_scaffold(self, scaffold_files: Dict[str, str]):
+        """NEW: Renders the entire project structure from the scaffold."""
         if not self.project_manager.active_project_path: return
-        self.log("info", "Visualizer received project plan. Calculating node layout.")
+        self.log("info", "Visualizer received project scaffold. Drawing node structure.")
 
-        root_path = self.project_manager.active_project_path
         self._clear_scene()
+        root_path = self.project_manager.active_project_path
+        all_filenames = list(scaffold_files.keys())
+
+        tree = self._build_tree_from_paths(all_filenames)
+        self._positions = self._calculate_node_positions(tree, root_path)
 
         root_node = ProjectNode(root_path.name, str(root_path), True)
         self.nodes[str(root_path)] = root_node
         self.scene.addItem(root_node)
-
-        all_filenames = [t['filename'] for t in plan.get("tasks", []) if 'filename' in t]
-        tree = self._build_tree_from_paths(all_filenames)
-
-        self._positions = self._calculate_node_positions(tree, root_path)
         root_node.setPos(self._positions[str(root_path)])
-        self.log("info", f"Calculated positions for {len(self._positions)} nodes.")
+
+        self._create_nodes_recursively(tree, root_path, root_node)
         QTimer.singleShot(50, self._fit_view_with_padding)
-
-    def _handle_file_generation_starting(self, filename: str) -> None:
-        self.log("info", f"Visualizer drawing node: {filename}")
-        if not self.project_manager.active_project_path: return
-
-        full_path = self.project_manager.active_project_path / filename
-        current_parent_node = self.nodes.get(str(self.project_manager.active_project_path))
-        if not current_parent_node:
-            self.log("error", "Root project node is missing.")
-            return
-
-        path_accumulator = self.project_manager.active_project_path
-        for part in Path(filename).parent.parts:
-            path_accumulator /= part
-            path_acc_str = str(path_accumulator)
-
-            if path_acc_str not in self.nodes:
-                folder_node = ProjectNode(part, path_acc_str, True)
-                self.nodes[path_acc_str] = folder_node
-                self.scene.addItem(folder_node)
-                if path_acc_str in self._positions:
-                    folder_node.setPos(self._positions[path_acc_str])
-                self._draw_connection(current_parent_node, folder_node)
-                current_parent_node = folder_node
-            else:
-                current_parent_node = self.nodes[path_acc_str]
-
-        full_path_str = str(full_path)
-        if full_path_str not in self.nodes:
-            is_folder = any(p.startswith(full_path_str + '/') for p in self._positions.keys())
-            node = ProjectNode(full_path.name, full_path_str, is_folder)
-            self.nodes[full_path_str] = node
-            self.scene.addItem(node)
-            if full_path_str in self._positions:
-                node.setPos(self._positions[full_path_str])
-            else:
-                self.log("error", f"No position calculated for {filename}!")
-                node.setPos(current_parent_node.pos() + QPointF(50, 50))
-            self._draw_connection(current_parent_node, node)
-            self._fit_view_with_padding()
 
     def display_existing_project(self, project_path_str: str) -> None:
         root_path = Path(project_path_str)
@@ -223,7 +178,15 @@ class ProjectVisualizerWindow(QMainWindow):
 
     def _build_tree_from_paths(self, paths: List[str]) -> Dict:
         tree = {}
-        all_paths = set(p for p_str in paths for p in [str(parent) for parent in Path(p_str).parents if str(parent) != '.'] + [p_str])
+        all_paths = set()
+        for p_str in paths:
+            path_obj = Path(p_str)
+            all_paths.add(p_str)
+            # Add all parent directories to ensure the tree is complete
+            for parent in path_obj.parents:
+                if str(parent) != '.':
+                    all_paths.add(str(parent))
+
         for p in sorted(list(all_paths)):
             level = tree
             for part in Path(p).parts:

@@ -2,9 +2,10 @@
 
 # Prompts for the new, lean workflow
 from .planner import ARCHITECT_PROMPT
-from .coder import MASTER_CODER_PROMPT
+from .scaffolding import ARCHITECT_SCAFFOLD_PROMPT, CODER_FILL_PROMPT
 
 __all__ = [
-    'ARCHITECT_PROMPT',
-    'MASTER_CODER_PROMPT',
+    'ARCHITECT_PROMPT', # Still used for the final REVIEW stage
+    'ARCHITECT_SCAFFOLD_PROMPT',
+    'CODER_FILL_PROMPT',
 ]
