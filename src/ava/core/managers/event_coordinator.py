@@ -84,19 +84,11 @@ class EventCoordinator:
             logger.warning("ProjectVisualizer not available for event wiring.")
             return
 
-        # This event is for the initial plan animation
         self.event_bus.subscribe("project_plan_generated", visualizer.handle_project_plan_generated)
-
-        # This event handles loading an existing project from disk
         self.event_bus.subscribe("project_root_selected", visualizer.display_existing_project)
-
-        # --- THIS IS THE FIX FOR MISSING FILES ---
-        # This event fires AFTER all code is generated and saved. It forces the visualizer
-        # to re-scan the project directory, guaranteeing it draws all the new files.
         self.event_bus.subscribe("workflow_finalized", lambda final_code: visualizer.display_existing_project(
             self.service_manager.project_manager.active_project_path))
-        # --- END OF FIX ---
-
+        self.event_bus.subscribe("file_generation_starting", visualizer._handle_file_generation_starting)
         logger.info("Project Visualizer events wired.")
 
     def _wire_lsp_events(self) -> None:
@@ -115,7 +107,7 @@ class EventCoordinator:
         """Wire events for updating the status bar."""
         if not self.window_manager: return
         main_window = self.window_manager.get_main_window()
-        if not main_window or not hasattr(main_window, 'sidebar'): return  # Using sidebar as a proxy for main window UI
+        if not main_window or not hasattr(main_window, 'sidebar'): return
 
         status_bar = main_window.statusBar()
         if status_bar and hasattr(status_bar, 'update_agent_status'):
@@ -175,13 +167,9 @@ class EventCoordinator:
 
         rag_manager = self.service_manager.get_rag_manager()
         if rag_manager:
-            # This is for adding external files to the CURRENT PROJECT's KB
             self.event_bus.subscribe("add_knowledge_requested", rag_manager.open_add_knowledge_dialog)
-            # This is for adding all files from the CURRENT PROJECT to its KB
             self.event_bus.subscribe("add_active_project_to_rag_requested", rag_manager.ingest_active_project)
-            # --- NEW EVENT WIRING for Global Knowledge ---
             self.event_bus.subscribe("add_global_knowledge_requested", rag_manager.open_add_global_knowledge_dialog)
-            # --- END NEW EVENT WIRING ---
         else:
             logger.warning("UI Event Wiring: RAGManager not available.")
 
@@ -207,25 +195,20 @@ class EventCoordinator:
         """Wire events related to the AI code generation workflow."""
         if self.workflow_manager:
             self.event_bus.subscribe("user_request_submitted", self.workflow_manager.handle_user_request)
-            self.event_bus.subscribe("review_and_fix_requested", self.workflow_manager.handle_review_and_fix_request)
-            self.event_bus.subscribe("fix_highlighted_error_requested",
-                                     self.workflow_manager.handle_review_and_fix_request)
+            # --- THIS IS THE FIX ---
+            # The line causing the crash has been removed.
+            # --- END OF FIX ---
         else:
             logger.warning("AI Workflow Event Wiring: WorkflowManager not available.")
 
         code_viewer = self.window_manager.get_code_viewer() if self.window_manager else None
         if code_viewer and hasattr(code_viewer, 'editor_manager'):
             editor_manager = code_viewer.editor_manager
-            # --- FIX: Wire events directly to the specific manager responsible ---
-            # These events are for the parent CodeViewer window
             self.event_bus.subscribe("prepare_for_generation", code_viewer.prepare_for_generation)
-
-            # These events are for the EditorTabManager specifically to prevent UI corruption
             self.event_bus.subscribe("stream_code_chunk", editor_manager.stream_content_to_editor)
             self.event_bus.subscribe("highlight_lines_for_edit", editor_manager.handle_highlight_lines)
             self.event_bus.subscribe("delete_highlighted_lines", editor_manager.handle_delete_lines)
             self.event_bus.subscribe("position_cursor_for_insert", editor_manager.handle_position_cursor)
-            # --- END FIX ---
         else:
             logger.warning("AI Workflow Event Wiring: CodeViewer or EditorTabManager not available.")
         logger.info("AI workflow events wired.")
@@ -248,11 +231,6 @@ class EventCoordinator:
     def _on_plugin_state_changed_for_sidebar(self, plugin_name: str, old_state: Any, new_state: Any) -> None:
         """
         Callback for when a plugin's state changes, to update the sidebar.
-
-        Args:
-            plugin_name: The name of the plugin that changed.
-            old_state: The previous state of the plugin.
-            new_state: The new state of the plugin.
         """
         self._update_sidebar_plugin_status()
 

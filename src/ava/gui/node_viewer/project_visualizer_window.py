@@ -7,9 +7,6 @@ from PySide6.QtCore import (
     QPointF,
     QRectF,
     Qt,
-    QPropertyAnimation,
-    QEasingCurve,
-    QParallelAnimationGroup,
     QTimer,
 )
 from PySide6.QtGui import (
@@ -121,75 +118,57 @@ class ProjectVisualizerWindow(QMainWindow):
         self.log("info", "Visualizer received project plan. Calculating node layout.")
 
         root_path = self.project_manager.active_project_path
-        if str(root_path) not in self.nodes:
-            self.display_existing_project(str(root_path))
+        self._clear_scene()
+
+        root_node = ProjectNode(root_path.name, str(root_path), True)
+        self.nodes[str(root_path)] = root_node
+        self.scene.addItem(root_node)
 
         all_filenames = [t['filename'] for t in plan.get("tasks", []) if 'filename' in t]
         tree = self._build_tree_from_paths(all_filenames)
 
         self._positions = self._calculate_node_positions(tree, root_path)
+        root_node.setPos(self._positions[str(root_path)])
         self.log("info", f"Calculated positions for {len(self._positions)} nodes.")
+        QTimer.singleShot(50, self._fit_view_with_padding)
 
-    # --- THIS IS THE CORRECTED METHOD ---
     def _handle_file_generation_starting(self, filename: str) -> None:
-        """
-        Draws a single node, ensuring its parent directories are drawn first.
-        """
-        self.log("info", f"Visualizer received signal to draw node: {filename}")
+        self.log("info", f"Visualizer drawing node: {filename}")
         if not self.project_manager.active_project_path: return
 
-        # Create the full path for the file/folder to be drawn
         full_path = self.project_manager.active_project_path / filename
-
-        # --- NEW LOGIC TO CREATE PARENT FOLDERS ---
-        # Get all parent directories, starting from the one closest to the root.
-        parents = list(reversed(full_path.parent.parents))
-        # Add the immediate parent to the list as well.
-        parents.append(full_path.parent)
-
         current_parent_node = self.nodes.get(str(self.project_manager.active_project_path))
         if not current_parent_node:
-            self.log("error", "Root project node is missing. Cannot draw children.")
+            self.log("error", "Root project node is missing.")
             return
 
-        for parent_dir in parents:
-            # Skip the root project path itself, as it's already the starting parent.
-            if parent_dir == self.project_manager.active_project_path:
-                continue
+        path_accumulator = self.project_manager.active_project_path
+        for part in Path(filename).parent.parts:
+            path_accumulator /= part
+            path_acc_str = str(path_accumulator)
 
-            parent_dir_str = str(parent_dir)
-            if parent_dir_str not in self.nodes:
-                # This parent folder node does not exist, so we must create it.
-                folder_node = ProjectNode(parent_dir.name, parent_dir_str, True)
-                self.nodes[parent_dir_str] = folder_node
+            if path_acc_str not in self.nodes:
+                folder_node = ProjectNode(part, path_acc_str, True)
+                self.nodes[path_acc_str] = folder_node
                 self.scene.addItem(folder_node)
-
-                if parent_dir_str in self._positions:
-                    folder_node.setPos(self._positions[parent_dir_str])
-
+                if path_acc_str in self._positions:
+                    folder_node.setPos(self._positions[path_acc_str])
                 self._draw_connection(current_parent_node, folder_node)
-                current_parent_node = folder_node  # The newly created folder is the parent for the next iteration.
+                current_parent_node = folder_node
             else:
-                # The node already exists, so just update our reference to it.
-                current_parent_node = self.nodes[parent_dir_str]
-        # --- END OF NEW LOGIC ---
+                current_parent_node = self.nodes[path_acc_str]
 
-        # Now, create the final file node itself
         full_path_str = str(full_path)
         if full_path_str not in self.nodes:
-            # Determine if the target itself is a folder
             is_folder = any(p.startswith(full_path_str + '/') for p in self._positions.keys())
-
             node = ProjectNode(full_path.name, full_path_str, is_folder)
             self.nodes[full_path_str] = node
             self.scene.addItem(node)
-
             if full_path_str in self._positions:
                 node.setPos(self._positions[full_path_str])
             else:
                 self.log("error", f"No position calculated for {filename}!")
                 node.setPos(current_parent_node.pos() + QPointF(50, 50))
-
             self._draw_connection(current_parent_node, node)
             self._fit_view_with_padding()
 
@@ -215,13 +194,11 @@ class ProjectVisualizerWindow(QMainWindow):
             current_path = parent_path / name
             current_path_str = str(current_path)
             is_folder = bool(children)
-
             node = ProjectNode(name, current_path_str, is_folder)
             self.nodes[current_path_str] = node
             self.scene.addItem(node)
             node.setPos(self._positions[current_path_str])
             self._draw_connection(parent_node, node)
-
             if children:
                 self._create_nodes_recursively(children, current_path, node)
 
@@ -246,20 +223,11 @@ class ProjectVisualizerWindow(QMainWindow):
 
     def _build_tree_from_paths(self, paths: List[str]) -> Dict:
         tree = {}
-        all_paths = set(paths)
-        for p_str in paths:
-            p = Path(p_str)
-            for parent in p.parents:
-                if str(parent) != '.':
-                    all_paths.add(str(parent))
-
+        all_paths = set(p for p_str in paths for p in [str(parent) for parent in Path(p_str).parents if str(parent) != '.'] + [p_str])
         for p in sorted(list(all_paths)):
-            parts = Path(p).parts
-            if not parts: continue
             level = tree
-            for part in parts:
-                if part not in level: level[part] = {}
-                level = level[part]
+            for part in Path(p).parts:
+                level = level.setdefault(part, {})
         return tree
 
     def _scan_directory_for_tree(self, root_path: Path) -> Dict:
@@ -267,8 +235,7 @@ class ProjectVisualizerWindow(QMainWindow):
         ignore_dirs = {'.git', '__pycache__', '.venv', 'venv', 'rag_db', '.ava_sessions'}
         try:
             for item in sorted(root_path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
-                if item.name in ignore_dirs:
-                    continue
+                if item.name in ignore_dirs: continue
                 if item.is_dir():
                     tree[item.name] = self._scan_directory_for_tree(item)
                 else:
@@ -286,10 +253,8 @@ class ProjectVisualizerWindow(QMainWindow):
 
         def layout_recursively(subtree: Dict, parent_path: Path, parent_center_y: float, depth: int):
             sorted_children = sorted(subtree.items(), key=lambda item: not bool(item[1]))
-
-            total_height = sum(get_subtree_leaf_count(children) * ROW_HEIGHT for name, children in sorted_children)
+            total_height = sum(get_subtree_leaf_count(children) * ROW_HEIGHT for _, children in sorted_children)
             current_y = parent_center_y - total_height / 2
-
             for name, children in sorted_children:
                 item_path = parent_path / name
                 leaf_count = get_subtree_leaf_count(children)
@@ -300,9 +265,9 @@ class ProjectVisualizerWindow(QMainWindow):
                     layout_recursively(children, item_path, child_center_y, depth + 1)
                 current_y += node_height
 
-        root_pos = QPointF(-COLUMN_WIDTH, 0)
+        root_pos = QPointF(-COLUMN_WIDTH / 2, 0)
         positions[str(root_path)] = root_pos
-        layout_recursively(tree, root_path, root_pos.y(), 0)
+        layout_recursively(tree, root_path, root_pos.y(), 1)
         return positions
 
     def show(self) -> None:

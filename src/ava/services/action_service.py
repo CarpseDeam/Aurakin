@@ -45,6 +45,12 @@ class ActionService:
                 chat_input.set_text_and_focus(prompt_text)
 
     async def handle_new_project(self):
+        # --- AGGRESSIVE STATE CLEARING ---
+        self.log("info", "New project requested. Aggressively clearing all session state.")
+        self.event_bus.emit("session_cleared")
+        self.event_bus.emit("chat_cleared", "New project started. Let's build something amazing!")
+        # --- END AGGRESSIVE STATE CLEARING ---
+
         project_manager = self.service_manager.get_project_manager()
         rag_manager = self.service_manager.get_rag_manager()
         app_state_service = self.service_manager.get_app_state_service()
@@ -70,11 +76,6 @@ class ActionService:
         if self.window_manager:
             chat_interface = self.window_manager.get_main_window().chat_interface
             if chat_interface:
-                # --- THIS IS THE FIX ---
-                # Explicitly clear the chat history from memory before loading the new session.
-                # This prevents context from a previous session bleeding into the new project.
-                chat_interface.clear_chat("New project created. Let's build something!")
-                # --- END OF FIX ---
                 chat_interface.set_project_manager(project_manager)
                 chat_interface.load_project_session()
 
@@ -82,6 +83,12 @@ class ActionService:
             self.event_bus.emit("branch_updated", project_manager.git_manager.get_active_branch_name())
 
     async def handle_load_project(self):
+        # --- AGGRESSIVE STATE CLEARING ---
+        self.log("info", "Load project requested. Aggressively clearing all session state.")
+        self.event_bus.emit("session_cleared")
+        self.event_bus.emit("chat_cleared", "Project loading...")
+        # --- END AGGRESSIVE STATE CLEARING ---
+
         project_manager = self.service_manager.get_project_manager()
         rag_manager = self.service_manager.get_rag_manager()
         app_state_service = self.service_manager.get_app_state_service()
@@ -124,8 +131,10 @@ class ActionService:
         app_state_service = self.service_manager.get_app_state_service()
         if app_state_service: app_state_service.set_app_state(AppState.BOOTSTRAP)
 
-        if self.window_manager and self.window_manager.get_main_window():
-            self.window_manager.get_main_window().chat_interface.clear_chat("New session started.")
+        # --- AGGRESSIVE STATE CLEARING ---
+        self.event_bus.emit("chat_cleared", "New session started.")
+        self.event_bus.emit("session_cleared")
+        # --- END AGGRESSIVE STATE CLEARING ---
 
     def log(self, level: str, message: str):
         self.event_bus.emit("log_message_received", "ActionService", level, message)

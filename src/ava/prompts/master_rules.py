@@ -16,10 +16,10 @@ LOGGING_RULE = """
 - At the top of the file, you MUST write: `import logging` and `logger = logging.getLogger(__name__)`.
 """
 
-# This rule is for the Coder agent.
+# This rule is for any code-writing agent.
 RAW_CODE_OUTPUT_RULE = """
 **LAW: RAW CODE OUTPUT ONLY**
-- Your entire response MUST be only the raw Python code for the assigned file.
+- Your entire response MUST be only the raw code for the assigned file.
 - Do not write any explanations, comments, or markdown before or after the code.
 """
 

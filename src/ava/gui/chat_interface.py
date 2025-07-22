@@ -279,7 +279,6 @@ class ChatInterface(QWidget):
         self.mode_toggle.setMode(InteractionMode.BUILD, animate=False)
         controls_layout.addWidget(self.mode_toggle)
 
-        # ProjectTypeSelector removed
         controls_layout.addStretch()
         layout.addLayout(controls_layout)
 
