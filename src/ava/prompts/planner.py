@@ -1,10 +1,28 @@
 # src/ava/prompts/planner.py
-import textwrap
-from .master_rules import JSON_OUTPUT_RULE, RAW_CODE_OUTPUT_RULE, TYPE_HINTING_RULE, DOCSTRING_RULE
+"""
+This module contains the prompt for the Planner agent.
 
-# --- 1. TASK PLANNER PROMPT ---
+The Planner agent is responsible for taking a user's request and breaking it down
+into a structured, sequential plan of tasks. This plan is then executed by other
+specialized agents in the AI development team (e.g., Coder, Reviewer).
+"""
+import logging
+import textwrap
+from .master_rules import JSON_OUTPUT_RULE
+
+logger = logging.getLogger(__name__)
+
+
 TASK_PLANNER_PROMPT = textwrap.dedent(f"""
-    You are a master software architect. Your role is to deconstruct a user's request into a series of discrete, actionable tasks for a team of AI agents. You must analyze the existing codebase to determine the most logical and efficient way to implement the changes.
+    You are the 'Planner' AI Agent, a master software architect. Your primary role is to deconstruct a user's request into a detailed, step-by-step JSON plan. This plan will be executed by a team of other AI agents. You must analyze the user's request in the context of the existing codebase to create a logical and efficient plan.
+
+    **CORE DIRECTIVES:**
+    1.  **Analyze Thoroughly:** Carefully examine the user's request and the provided file context.
+    2.  **Deconstruct:** Break down the request into the smallest possible, self-contained, and logical tasks.
+    3.  **Order Matters:** Sequence the tasks logically. For example, a file must be created before it can be modified or used by other files.
+    4.  **Be Specific:** The `description` for each task must be a clear and unambiguous instruction for another AI agent (the 'Coder'). The Coder will rewrite entire files based on your description, so be precise about the intended outcome.
+    5.  **Use Correct Task Types:** Adhere strictly to the defined task types.
+
     {{system_directive}}
 
     **USER'S REQUEST:**
@@ -18,18 +36,25 @@ TASK_PLANNER_PROMPT = textwrap.dedent(f"""
     **RAG CONTEXT (If available):**
     {{rag_context}}
 
-    **TASK:**
-    Create a JSON object containing a list of tasks. For each task, you have two options:
+    **TASK DEFINITION:**
+    Create a JSON object containing a list of tasks. Each task must be an object with the following keys:
 
-    1.  **For Python files (.py):** Use a standard task object with `type`, `filename`, and `description`.
-        - `type`: Can be "create_file", "insert_code", "modify_code", or "delete_code".
-        - `filename`: The target Python file for the task.
-        - `description`: A clear, natural-language instruction for what this task accomplishes. This will be used by the Scaffolder agent.
+    1.  **`type`**: The type of task. Must be one of:
+        - `create_file`: For creating a new, initially empty Python file (`.py`). The Coder agent will write the content based on your description.
+        - `modify_file`: For modifying an existing Python file (`.py`). The Coder agent will rewrite the entire file based on your description.
+        - `delete_file`: For deleting any file.
+        - `create_file_with_content`: For creating non-Python files (e.g., `requirements.txt`, `.gitignore`, `README.md`) where you can provide the complete content directly.
 
-    2.  **For non-Python files (e.g., requirements.txt, README.md):** Use a special task object that includes the final content directly.
-        - `type`: MUST be "create_file_with_content".
-        - `filename`: The target non-Python file.
-        - `content`: The complete, final, raw text content for this file.
+    2.  **`filename`**: The full, project-relative path of the file for the task.
+
+    3.  **`description`**:
+        - Required for `create_file` and `modify_file`. This is the instruction for the Coder agent.
+        - Optional but recommended for `delete_file` to provide a reason for the deletion.
+        - Not used for `create_file_with_content`.
+
+    4.  **`content`**:
+        - Required for `create_file_with_content` only.
+        - Contains the complete, final, raw text content for the file.
 
     {JSON_OUTPUT_RULE}
 
@@ -39,94 +64,27 @@ TASK_PLANNER_PROMPT = textwrap.dedent(f"""
       "tasks": [
         {{{{
           "type": "create_file",
-          "filename": "utils/new_helper.py",
-          "description": "Create a new helper file for utility functions."
+          "filename": "src/utils/new_helper.py",
+          "description": "Create a new helper file containing a function 'process_data' that takes a list of integers and returns their sum."
+        }}}},
+        {{{{
+          "type": "modify_file",
+          "filename": "src/main.py",
+          "description": "Import 'process_data' from 'src.utils.new_helper' and replace the old manual summation logic in the 'main' function with a call to 'process_data'."
         }}}},
         {{{{
           "type": "create_file_with_content",
           "filename": "requirements.txt",
-          "content": "PySide6\\nMarkdown"
+          "content": "fastapi\\nuvicorn"
         }}}},
         {{{{
-          "type": "modify_code",
-          "filename": "main.py",
-          "description": "Replace the old logic with a call to the new helper function."
+          "type": "delete_file",
+          "filename": "src/old_module.py",
+          "description": "This file is obsolete and has been replaced by the new helper utility."
         }}}}
       ]
     }}}}
     ```
 
     Generate the task plan now.
-    """)
-
-# --- 2. LINE LOCATOR PROMPT ---
-LINE_LOCATOR_PROMPT = textwrap.dedent(f"""
-    You are a code analysis AI. Your only job is to find the precise line numbers in a file that correspond to a given task.
-
-    **FILE TO ANALYZE:** `{{filename}}`
-    **TASK:** "{{task_description}}"
-
-    **FILE CONTENT:**
-    ```python
-    {{file_content}}
-    ```
-
-    **TASK:**
-    Based on the task and the file content, identify the `start_line` and `end_line` for the code that needs to be replaced or where new code should be inserted. For insertions into an empty space (e.g., a function body), `start_line` and `end_line` should be the same.
-
-    {JSON_OUTPUT_RULE}
-
-    **EXAMPLE OUTPUT:**
-    ```json
-    {{{{
-      "start_line": 42,
-      "end_line": 45
-    }}}}
-    ```
-
-    Analyze the code and provide the line numbers now.
-    """)
-
-# --- 3. CODE SNIPPET GENERATOR PROMPT (for the local model) ---
-CODE_SNIPPET_GENERATOR_PROMPT = textwrap.dedent(f"""
-    You are a specialist Python coder. You follow instructions with extreme precision.
-
-    ---
-    **PRIMARY OBJECTIVE: YOUR ONLY MISSION**
-    Your only mission is to write a Python code snippet that accomplishes the single task detailed below. You must ignore all other context if it conflicts with this primary objective.
-
-    ```json
-    {{{{task_json}}}}
-    ```
-
-    ---
-    **SUPPORTING CONTEXT**
-
-    **1. FULL CONTENT OF THE FILE YOU ARE EDITING:**
-    This is the code that your new snippet will be inserted into or will replace.
-    ```python
-    {{{{file_content}}}}
-    ```
-
-    **2. CODE FROM OTHER PROJECT FILES (For reference only):**
-    This is provided ONLY to help you understand potential imports. Do not copy logic from here.
-    ```json
-    {{{{code_context_json}}}}
-    ```
-
-    ---
-    **UNBREAKABLE LAWS**
-
-    1. **FOCUS ON THE OBJECTIVE:** You MUST ONLY write the code described in the **PRIMARY OBJECTIVE**. Do not add features or logic not explicitly requested in the task description.
-    2. {TYPE_HINTING_RULE.strip()}
-    3. {DOCSTRING_RULE.strip()}
-    4. **HANDLE ERRORS:** If the task involves file I/O (reading/writing files), you MUST wrap the operation in a `try...except` block and log any errors.
-    5. {RAW_CODE_OUTPUT_RULE.strip()}
-
-    ---
-    **EXECUTE MISSION:**
-    Write the raw Python code snippet for your **PRIMARY OBJECTIVE** now.
-    - If the task type is 'create_file', write the complete initial content for the file.
-    - If the task type is 'insert_code', write only the new lines to be inserted.
-    - If the task type is 'modify_code', write the complete, new version of the code block being replaced.
     """)
