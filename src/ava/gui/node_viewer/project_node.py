@@ -40,11 +40,11 @@ class ProjectNode(QGraphicsObject):
         """
         # --- THIS IS THE FIX ---
         if change == QGraphicsItem.ItemPositionHasChanged:
-        # --- END FIX ---
             for conn in self.incoming_connections:
                 conn.update_path()
             for conn in self.outgoing_connections:
                 conn.update_path()
+        # --- END FIX ---
         return super().itemChange(change, value)
 
     def add_connection(self, connection: Any, is_outgoing: bool) -> None:

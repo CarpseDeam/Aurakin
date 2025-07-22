@@ -94,10 +94,7 @@ class ServiceManager:
         # --- THIS IS THE FIX ---
         self.generation_coordinator = GenerationCoordinator(
             service_manager=self,
-            event_bus=self.event_bus,
-            context_manager=self.context_manager,
-            import_fixer_service=self.import_fixer_service,
-            integration_validator=self.integration_validator
+            event_bus=self.event_bus
         )
         # --- END FIX ---
 
@@ -111,7 +108,7 @@ class ServiceManager:
 
         self.log_to_event_bus("info", "[ServiceManager] Services initialized")
 
-    # ... (the rest of the file is unchanged) ...
+    # ... (the rest of the file is unchanged, no need to include it all) ...
     def launch_background_servers(self):
         """Launches the RAG and LLM servers as separate processes."""
         python_executable_to_use: str
@@ -265,7 +262,9 @@ class ServiceManager:
                 self.log_to_event_bus("error", f"[ServiceManager] Error shutting down plugin manager: {e}")
         self.log_to_event_bus("info", "[ServiceManager] Services shutdown complete")
 
-    # ... (rest of the file is unchanged) ...
+    def is_fully_initialized(self) -> bool:
+        return self.generation_coordinator is not None
+
     def get_lsp_client_service(self) -> LSPClientService:
         return self.lsp_client_service
 

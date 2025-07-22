@@ -6,17 +6,10 @@ from typing import Optional, Dict, TYPE_CHECKING
 
 from PySide6.QtWidgets import QFileDialog, QMessageBox
 
-from src.ava.core.event_bus import EventBus
 from src.ava.core.app_state import AppState
+from src.ava.core.event_bus import EventBus
 from src.ava.core.interaction_mode import InteractionMode
-from src.ava.prompts import (
-    CREATIVE_ASSISTANT_PROMPT, AURA_REFINEMENT_PROMPT
-)
-
-if TYPE_CHECKING:
-    from src.ava.core.managers.service_manager import ServiceManager
-    from src.ava.core.managers.window_manager import WindowManager
-    from src.ava.core.managers.task_manager import TaskManager
+from src.ava.prompts import AURA_REFINEMENT_PROMPT, CREATIVE_ASSISTANT_PROMPT
 
 
 class WorkflowManager:
@@ -136,8 +129,8 @@ class WorkflowManager:
                 self.log("info", "Injected .gitignore into the build plan for new project visualization.")
         # --- END FIX ---
 
-        # 2. Execute the plan with the Coordinator
-        final_code = await coordinator.coordinate_generation(whiteboard_plan, existing_files)
+        # 2. Execute the plan with the Coordinator using the new method name
+        final_code = await coordinator.coordinate_architect_led_completion(whiteboard_plan, existing_files, prompt)
         if not final_code:
             self.log("error", "Build workflow failed: Code generation returned no files.")
             self.event_bus.emit("ai_response_ready", "Sorry, the code generation failed unexpectedly.")

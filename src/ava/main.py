@@ -1,5 +1,8 @@
+# src/ava/main.py
 import sys
 from pathlib import Path
+
+from src.ava.utils.exception_handler import setup_exception_hook
 
 # --- ROBUST PATH HANDLING FOR SOURCE AND BUNDLED ENVIRONMENTS ---
 # This block MUST come *before* any imports from 'src.ava.*' or 'ava.*'
@@ -40,8 +43,6 @@ from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 
-from src.ava.core.application import Application
-from src.ava.utils.exception_handler import setup_exception_hook
 
 
 async def main_async_logic(app_instance, root_path: Path):
@@ -50,37 +51,32 @@ async def main_async_logic(app_instance, root_path: Path):
     """
     ava_app = None
     shutdown_future = asyncio.get_event_loop().create_future()
-    shutdown_in_progress = False
 
     async def on_about_to_quit():
-        nonlocal shutdown_in_progress
-        if shutdown_in_progress: return
-        shutdown_in_progress = True
-        print("[main] Application is about to quit. Starting graceful shutdown...")
+        print("[main] Application 'aboutToQuit' signal received. Starting graceful shutdown...")
         if ava_app:
             try:
-                # Assuming cancel_all_tasks is an async method on the Application instance
-                # that correctly propagates cancellation to its TaskManager.
-                if hasattr(ava_app, 'task_manager') and ava_app.task_manager:
-                    await ava_app.task_manager.cancel_all_tasks()
-
-                # Also ensure ServiceManager can shut down background processes
-                if hasattr(ava_app, 'service_manager') and ava_app.service_manager:
-                    await ava_app.service_manager.shutdown()
-
+                # Delegate the entire shutdown process to the application object
+                # and WAIT for it to complete.
+                await ava_app.shutdown()
+                print("[main] Graceful shutdown complete.")
             except Exception as e:
-                print(f"[main] Error during shutdown tasks: {e}")
-        if not shutdown_future.done(): shutdown_future.set_result(True)
-        print("[main] Graceful shutdown complete.")
+                print(f"[main] Error during application shutdown: {e}")
+
+        # Signal that the async cleanup is done, allowing the program to exit.
+        if not shutdown_future.done():
+            shutdown_future.set_result(True)
 
     app_instance.aboutToQuit.connect(lambda: asyncio.create_task(on_about_to_quit()))
 
     try:
         # Pass the correctly determined project_root to the Application
+        from src.ava.core.application import Application
         ava_app = Application(project_root=root_path)
         await ava_app.initialize_async()
         ava_app.show()
         print("[main] Application ready and displayed.")
+        # This will wait until the shutdown_future is resolved by the 'on_about_to_quit' handler.
         await shutdown_future
     except Exception as e:
         print(f"[main] CRITICAL ERROR during application startup: {e}", file=sys.stderr)
@@ -93,8 +89,10 @@ async def main_async_logic(app_instance, root_path: Path):
             print(f"Could not show error message box: {msg_e}", file=sys.stderr)
     finally:
         print("[main] Main async logic has finished. Exiting.")
-        # Schedule a QApplication.quit() to ensure a clean exit, as asyncio tasks might keep it alive.
-        QTimer.singleShot(100, app_instance.quit)
+        # Ensure the application instance quits if it hasn't already.
+        if not shutdown_future.done():
+            shutdown_future.set_result(True)
+        QApplication.instance().quit()
 
 
 if __name__ == "__main__":

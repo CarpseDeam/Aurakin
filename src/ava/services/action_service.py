@@ -72,6 +72,7 @@ class ActionService:
             if chat_interface:
                 # --- THIS IS THE FIX ---
                 # Explicitly clear the chat history from memory before loading the new session.
+                # This prevents context from a previous session bleeding into the new project.
                 chat_interface.clear_chat("New project created. Let's build something!")
                 # --- END OF FIX ---
                 chat_interface.set_project_manager(project_manager)

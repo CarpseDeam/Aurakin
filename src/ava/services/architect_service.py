@@ -1,4 +1,3 @@
-# src/ava/services/architect_service.py
 from __future__ import annotations
 import asyncio
 import json
@@ -109,10 +108,26 @@ class ArchitectService:
             The parsed JSON plan from the LLM, or None on failure.
         """
         self.log("info", "Generating high-level task plan...")
-        rag_context = await self._get_combined_rag_context(user_request)
+
+        is_new_project = not existing_files
+        system_directive = ""
+        rag_context = ""
+
+        if is_new_project:
+            self.log("info", "New project detected. Applying strict context directive and skipping RAG.")
+            system_directive = (
+                "\n**SYSTEM DIRECTIVE:** This is a brand new project. Your plan must ONLY include files and logic "
+                "directly related to the user's request. You are forbidden from including any concepts or code from "
+                "previous, unrelated projects."
+            )
+        else:
+            self.log("info", "Existing project detected. Querying RAG for context.")
+            rag_context = await self._get_combined_rag_context(user_request)
+
         code_context_str = json.dumps(existing_files, indent=2) if existing_files else "{}"
 
         prompt = TASK_PLANNER_PROMPT.format(
+            system_directive=system_directive,
             user_request=user_request,
             code_context=code_context_str,
             rag_context=rag_context

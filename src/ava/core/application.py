@@ -5,13 +5,7 @@ import sys
 from pathlib import Path
 
 from src.ava.core.event_bus import EventBus
-from src.ava.core.managers import (
-    ServiceManager,
-    WindowManager,
-    EventCoordinator,
-    WorkflowManager,
-    TaskManager
-)
+from src.ava.core.managers import WindowManager, ServiceManager, TaskManager, WorkflowManager, EventCoordinator
 from src.ava.core.plugins.plugin_manager import PluginManager
 from src.ava.core.project_manager import ProjectManager
 
@@ -48,7 +42,8 @@ class Application:
         self.event_bus.subscribe("open_code_viewer_requested", self.window_manager.show_code_viewer)
         # --- FIX: Removed the conflicting event subscription ---
         # self.event_bus.subscribe("project_root_selected", self.project_manager.load_project)
-        self.event_bus.subscribe("application_shutdown", lambda: asyncio.create_task(self.shutdown()))
+        # --- FIX: Removed shutdown event subscription as it's now handled by the main loop ---
+        # self.event_bus.subscribe("application_shutdown", lambda: asyncio.create_task(self.shutdown()))
 
     async def initialize_async(self):
         """Perform async initialization of components."""

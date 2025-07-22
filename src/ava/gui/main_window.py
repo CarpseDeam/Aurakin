@@ -5,8 +5,8 @@ from PySide6.QtCore import QTimer
 from PySide6.QtGui import QCloseEvent
 
 from src.ava.core.event_bus import EventBus
-from src.ava.gui.enhanced_sidebar import EnhancedSidebar
 from src.ava.gui.chat_interface import ChatInterface
+from src.ava.gui.enhanced_sidebar import EnhancedSidebar
 from src.ava.gui.status_bar import StatusBar
 
 
@@ -49,20 +49,13 @@ class MainWindow(QMainWindow):  # <-- PROMOTED from QWidget to QMainWindow
 
     def closeEvent(self, event: QCloseEvent):
         """
-        Handle window close event with proper async cleanup.
+        Handles the window close event by properly quitting the application,
+        which allows the main async loop to perform graceful cleanup.
         """
-        if self._closing:
-            event.accept()
-            return
-
-        self._closing = True
-        print("[MainWindow] Close event triggered - starting graceful shutdown...")
-
-        try:
-            if self.event_bus:
-                self.event_bus.emit("application_shutdown")
-        except Exception as e:
-            print(f"[MainWindow] Error during shutdown event: {e}")
-
-        event.ignore()
-        QTimer.singleShot(500, QApplication.instance().quit)
+        if not self._closing:
+            self._closing = True
+            print("[MainWindow] Close event triggered. Asking application to quit gracefully.")
+            # This is the correct, standard way to initiate a shutdown.
+            # It will trigger the 'aboutToQuit' signal in the main event loop.
+            QApplication.instance().quit()
+        event.accept()
