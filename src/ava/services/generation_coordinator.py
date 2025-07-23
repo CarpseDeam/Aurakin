@@ -7,7 +7,7 @@ import ast
 from typing import Dict, Any, Optional, List, Tuple
 
 from src.ava.core.event_bus import EventBus
-from src.ava.prompts import ARCHITECT_SCAFFOLD_PROMPT, CODER_FILL_PROMPT
+from src.ava.prompts import ARCHITECT_SCAFFOLD_PROMPT, CODER_FILL_PROMPT, ARCHITECT_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -187,11 +187,9 @@ class GenerationCoordinator:
             self.event_bus.emit("delete_highlighted_lines", filename)
             await asyncio.sleep(0.4)
 
-            # After deletion, we need to update the in-memory content
             lines = modified_files[filename].splitlines()
             del lines[start - 1:end]
 
-            # Insert new code at the correct position
             lines[start - 1:start - 1] = corrected_code.splitlines()
             final_content = "\n".join(lines)
             modified_files[filename] = final_content

@@ -1,4 +1,5 @@
 # src/ava/prompts/master_rules.py
+import textwrap
 
 # This rule is for any agent that must return a JSON object.
 JSON_OUTPUT_RULE = """
@@ -45,3 +46,12 @@ DOCSTRING_RULE = """
 - Module docstrings should describe the file's purpose.
 - Function/method docstrings must describe the function's purpose, its arguments (`Args:`), and what it returns (`Returns:`).
 """
+
+# NEW RULE FOR CODE QUALITY
+SENIOR_DEV_PRINCIPLES_RULE = textwrap.dedent("""
+    **LAW: SENIOR DEVELOPER PRINCIPLES.**
+    - **Robustness:** Always include error handling (e.g., `try...except` blocks) for file operations, network requests, or potential `KeyError` exceptions.
+    - **Clarity:** Use clear, descriptive variable and function names.
+    - **Modularity:** Prefer smaller, single-purpose functions. If a function is doing more than one thing, it should be broken down.
+    - **Qt Best Practices:** When writing PySide6 code, use the signal and slot mechanism for communication. Block signals when programmatically changing widget states to prevent infinite loops (e.g., `widget.blockSignals(True)`).
+    """)
