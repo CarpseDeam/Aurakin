@@ -64,6 +64,7 @@ CODER_FILL_PROMPT = textwrap.dedent(f"""
     **LAW #2: IMPLEMENT THE BODY ONLY.**
     - Your output MUST be ONLY the raw, indented Python code that belongs inside this function.
     - Do NOT repeat the `def ...:` line or the docstring. Your code will replace the `pass` statement.
+    - **EXAMPLE:** If the function is `def my_func(x):\\n    \"\"\"Does a thing.\"\"\"\\n    pass`, a **CORRECT** response is `y = x * 2\\nreturn y`. An **INCORRECT** response is `def my_func(x):\\n    y = x * 2\\n    return y`.
 
     **LAW #3: NO IMPORTS ALLOWED.**
     - You are STRICTLY FORBIDDEN from writing any `import` statements.

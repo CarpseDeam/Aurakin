@@ -6,8 +6,9 @@
     "reviewer": "google/gemini-2.5-pro"
   },
   "role_temperatures": {
-    "architect": 0.35,
+    "architect": 0.25,
     "coder": 0.1,
-    "chat": 0.7
+    "chat": 0.7,
+    "reviewer": 0.2
   }
 }
