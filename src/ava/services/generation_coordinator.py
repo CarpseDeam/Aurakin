@@ -2,7 +2,6 @@
 import logging
 from typing import Dict, Any, Optional
 
-
 from .scaffolding_service import ScaffoldingService
 from .implementation_service import ImplementationService
 from .review_service import ReviewService
@@ -16,17 +15,21 @@ class GenerationCoordinator:
     Orchestrates the new "Serial Scaffolding" workflow by coordinating
     the Scaffolding, Implementation, and Review services.
     """
+
     def __init__(self, service_manager: Any, event_bus: EventBus):
         self.service_manager = service_manager
         self.event_bus = event_bus
 
     async def coordinate_generation(
-        self,
-        plan: Dict[str, Any],
-        existing_files: Optional[Dict[str, str]],
-        user_request: str
+            self,
+            plan: Dict[str, Any],
+            existing_files: Optional[Dict[str, str]],
+            user_request: str
     ) -> Optional[Dict[str, str]]:
         """Executes the three-phase generation pipeline."""
+
+        # --- NEW: Announce the start of the entire build process ---
+        self.event_bus.emit("build_workflow_started")
 
         # Instantiate services for this run
         scaffolding_service = ScaffoldingService(self.service_manager, self.event_bus)

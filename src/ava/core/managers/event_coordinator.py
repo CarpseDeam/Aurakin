@@ -214,6 +214,10 @@ class EventCoordinator:
             self.event_bus.subscribe("delete_highlighted_lines", editor_manager.handle_delete_lines)
             self.event_bus.subscribe("stream_text_at_cursor", editor_manager.handle_stream_at_cursor)
             self.event_bus.subscribe("finalize_editor_content", editor_manager.handle_finalize_content)
+
+            # --- NEW: Control LSP diagnostics during generation ---
+            self.event_bus.subscribe("build_workflow_started", lambda: editor_manager.set_generating_state(True))
+            self.event_bus.subscribe("ai_workflow_finished", lambda: editor_manager.set_generating_state(False))
         else:
             logger.warning("AI Workflow Event Wiring: CodeViewer or EditorTabManager not available.")
         logger.info("AI workflow events wired.")

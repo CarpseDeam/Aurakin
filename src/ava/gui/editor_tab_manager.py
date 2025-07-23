@@ -24,6 +24,7 @@ class EditorTabManager:
         self.project_manager = project_manager
         self.editors: Dict[str, EnhancedCodeEditor] = {}
         self.lsp_client = None
+        self._is_generating = False  # NEW: Flag to suppress diagnostics
         self._setup_initial_state()
         self._connect_events()
 
@@ -290,6 +291,10 @@ class EditorTabManager:
         QMessageBox.critical(self.tab_widget, "Save Error", f"Could not save '{filename}'\nError: {error}")
 
     def handle_diagnostics(self, uri: str, diagnostics: List[Dict[str, Any]]):
+        # --- NEW: The "Quiet Mode" Check ---
+        if self._is_generating:
+            return  # Ignore all diagnostics while AI is working
+
         try:
             file_path = Path(uri.replace("file:///", "").replace("%3A", ":"))
             norm_path_str = os.path.normcase(str(file_path.resolve()))
@@ -334,6 +339,22 @@ class EditorTabManager:
         editor = self._get_editor_for_filename(filename)
         if editor:
             editor.mark_clean()
+
+    # --- NEW: Methods to control the generation flag ---
+    def set_generating_state(self, is_generating: bool):
+        """Controls whether to suppress LSP diagnostics."""
+        print(f"[EditorTabManager] Setting generating state to: {is_generating}")
+        self._is_generating = is_generating
+        if not is_generating:
+            # When generation ends, clear old squiggles and re-validate all open files
+            for path_str, editor in self.editors.items():
+                editor.set_diagnostics([])  # Clear immediately
+                # Trigger a re-check
+                asyncio.create_task(self.lsp_client.did_open(path_str, editor.toPlainText()))
+        else:
+            # When generation starts, clear all squiggles immediately
+            for editor in self.editors.values():
+                editor.set_diagnostics([])
 
     def _handle_file_renamed(self, old_rel_path_str: str, new_rel_path_str: str):
         old_norm_path = self._resolve_and_normalize_path(old_rel_path_str)
