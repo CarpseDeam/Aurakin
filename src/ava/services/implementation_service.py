@@ -50,26 +50,37 @@ class ImplementationService(BaseGenerationService):
             function_body = await self._call_llm_agent(prompt, "coder")
 
             if function_body:
-                # Animate the replacement in the UI with much shorter delays
+                # --- UI Animation Sequence ---
+                # 1. Highlight the 'pass' statement that will be replaced.
                 self.event_bus.emit("highlight_lines_for_edit", filename, func_def['pass_start_line'],
                                     func_def['pass_end_line'])
-                await asyncio.sleep(0.1)
-                self.event_bus.emit("delete_highlighted_lines", filename)
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.4)  # Perceptible pause
 
-                # Replace the code in our local copy
-                lines = implemented_code[filename].splitlines()
-                pass_statement_line_index = func_def['pass_start_line'] - 1
+                # 2. Delete the highlighted 'pass' statement. The editor's cursor will be left at this position.
+                self.event_bus.emit("delete_highlighted_lines", filename)
+                await asyncio.sleep(0.2)  # Perceptible pause
+
+                # 3. "Type" the new code in character-by-character for a live effect.
                 indentation = ' ' * func_def['col_offset']
                 indented_body_lines = [f"{indentation}{line}" for line in function_body.splitlines()]
+                text_to_insert = "\n".join(indented_body_lines)
 
-                # Replace the single 'pass' line with the new body
+                for char in text_to_insert:
+                    self.event_bus.emit("stream_text_at_cursor", filename, char)
+                    await asyncio.sleep(0.005)  # Very short delay for typing feel
+                await asyncio.sleep(0.2) # Pause after typing
+
+                # --- Internal State Update ---
+                # Now that the animation is done, update our internal representation of the code.
+                lines = implemented_code[filename].splitlines()
+                pass_statement_line_index = func_def['pass_start_line'] - 1
                 lines[pass_statement_line_index:pass_statement_line_index + 1] = indented_body_lines
                 implemented_code[filename] = "\n".join(lines)
 
-                # Update the UI with the new content
-                self.event_bus.emit("file_content_updated", filename, implemented_code[filename])
-                await asyncio.sleep(0.05)
+                # --- Finalize UI State ---
+                # Tell the editor that the animated changes are now the "saved" (canonical) state.
+                self.event_bus.emit("finalize_editor_content", filename)
+
             else:
                 self.log("warning",
                          f"Coder failed to provide a body for {func_def['name']} in {filename}. 'pass' will be kept.")
@@ -80,7 +91,7 @@ class ImplementationService(BaseGenerationService):
         """Uses AST to find functions containing only docstrings and a single 'pass' statement."""
         fill_tasks = []
         for filename, content in scaffold_files.items():
-            if not content.strip():
+            if not content.strip() or not filename.endswith('.py'):
                 continue
             try:
                 tree = ast.parse(content)

@@ -209,11 +209,11 @@ class EventCoordinator:
             self.event_bus.subscribe("project_scaffold_generated", code_viewer.display_scaffold)
             self.event_bus.subscribe("file_content_updated", editor_manager.create_or_update_tab)
 
-            self.event_bus.subscribe("prepare_for_generation", code_viewer.prepare_for_generation)
-            self.event_bus.subscribe("stream_code_chunk", editor_manager.stream_content_to_editor)
+            # --- Surgical and Streaming Edit Events ---
             self.event_bus.subscribe("highlight_lines_for_edit", editor_manager.handle_highlight_lines)
             self.event_bus.subscribe("delete_highlighted_lines", editor_manager.handle_delete_lines)
-            self.event_bus.subscribe("position_cursor_for_insert", editor_manager.handle_position_cursor)
+            self.event_bus.subscribe("stream_text_at_cursor", editor_manager.handle_stream_at_cursor)
+            self.event_bus.subscribe("finalize_editor_content", editor_manager.handle_finalize_content)
         else:
             logger.warning("AI Workflow Event Wiring: CodeViewer or EditorTabManager not available.")
         logger.info("AI workflow events wired.")

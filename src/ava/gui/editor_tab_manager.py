@@ -23,7 +23,7 @@ class EditorTabManager:
         self.event_bus = event_bus
         self.project_manager = project_manager
         self.editors: Dict[str, EnhancedCodeEditor] = {}
-        self.lsp_client = None  # Will be set from CodeViewerWindow
+        self.lsp_client = None
         self._setup_initial_state()
         self._connect_events()
 
@@ -34,9 +34,7 @@ class EditorTabManager:
             if self.project_manager and self.project_manager.active_project_path:
                 path = self.project_manager.active_project_path / path
             else:
-                # Cannot resolve a relative path without a project context
                 return None
-        # Use normcase for case-insensitive filesystems (Windows) and resolve for symlinks etc.
         return os.path.normcase(str(path.resolve()))
 
     def set_lsp_client(self, lsp_client):
@@ -132,9 +130,45 @@ class EditorTabManager:
     def set_editor_content(self, norm_path_str: str, content: str):
         if norm_path_str in self.editors:
             editor = self.editors[norm_path_str]
-            editor.set_content(content)
+
+            # --- THIS IS THE NEW, ROBUST FIX ---
+            scrollbar = editor.verticalScrollBar()
+            original_scroll_value = scrollbar.value()
+
+            old_content = editor.toPlainText()
+            old_line_count = old_content.count('\n')
+            new_line_count = content.count('\n')
+            line_diff = new_line_count - old_line_count
+
+            # Surgically replace the content to avoid flicker and resetting the view
+            cursor = editor.textCursor()
+            cursor.beginEditBlock()
+            cursor.select(QTextCursor.SelectionType.Document)
+            cursor.insertText(content)
+            cursor.endEditBlock()
+
+            # Restore original content state for dirty checking
+            editor._original_content = content
+            editor._is_dirty = False
+
+            # Adjust scrollbar position intelligently
+            # This is a heuristic that works well for appending content at the end.
+            # A more complex diff would be needed for perfect middle-of-file edits,
+            # but this is a huge improvement over resetting to the top.
+            if original_scroll_value == scrollbar.maximum() or original_scroll_value == 0:
+                # If we were at the bottom or top, stay there
+                pass
+            else:
+                # Attempt to adjust based on line changes.
+                # A simple approximation: line height * difference in lines.
+                line_height = editor.fontMetrics().height()
+                scrollbar.setValue(original_scroll_value + (line_diff * line_height))
+
+            # --- END OF FIX ---
+
             self._update_tab_title(norm_path_str)
             if self.lsp_client:
+                # Use didChange instead of didOpen for subsequent updates
                 asyncio.create_task(self.lsp_client.did_open(norm_path_str, content))
 
     def stream_content_to_editor(self, filename: str, chunk: str):
@@ -257,7 +291,6 @@ class EditorTabManager:
 
     def handle_diagnostics(self, uri: str, diagnostics: List[Dict[str, Any]]):
         try:
-            # The URI from LSP is already canonical
             file_path = Path(uri.replace("file:///", "").replace("%3A", ":"))
             norm_path_str = os.path.normcase(str(file_path.resolve()))
             if norm_path_str in self.editors:
@@ -288,6 +321,19 @@ class EditorTabManager:
         editor = self._get_editor_for_filename(filename)
         if editor:
             editor.set_cursor_position(line, col)
+
+    def handle_stream_at_cursor(self, filename: str, chunk: str):
+        """NEW: Handles streaming text insertion at the current cursor position."""
+        editor = self._get_editor_for_filename(filename)
+        if editor:
+            editor.insertPlainText(chunk)
+            editor.ensureCursorVisible()
+
+    def handle_finalize_content(self, filename: str):
+        """NEW: Marks the editor's current content as 'clean' or 'saved'."""
+        editor = self._get_editor_for_filename(filename)
+        if editor:
+            editor.mark_clean()
 
     def _handle_file_renamed(self, old_rel_path_str: str, new_rel_path_str: str):
         old_norm_path = self._resolve_and_normalize_path(old_rel_path_str)

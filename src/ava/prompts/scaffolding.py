@@ -34,6 +34,20 @@ ARCHITECT_SCAFFOLD_PROMPT = textwrap.dedent(f"""
     **LAW #5: THE PRINCIPLE OF THE RUNNABLE SKELETON.**
     - The project skeleton you generate MUST be runnable immediately after creation. This means you MUST include a `main.py` (or equivalent) that starts the application. This is a non-negotiable requirement.
 
+    **LAW #6: EXACT OUTPUT FORMAT.**
+    - Your entire response MUST be a single JSON object.
+    - The JSON object must consist ONLY of key-value pairs.
+    - The `key` MUST be the relative file path (e.g., "src/app/main.py").
+    - The `value` MUST be the full source code for that file as a string.
+    - DO NOT nest the file dictionary inside any other keys.
+    - **Correct Example:**
+      ```json
+      {{{{
+        "main.py": "import os\\n\\nif __name__ == '__main__':\\n    pass",
+        "utils/helpers.py": "def helper_function():\\n    pass"
+      }}}}
+      ```
+
     {JSON_OUTPUT_RULE}
 
     Execute your mission. Generate the complete, professional-grade project SKELETON now.
@@ -72,6 +86,23 @@ CODER_FILL_PROMPT = textwrap.dedent(f"""
 
     **LAW #4: ADHERE TO THE STATED PURPOSE.**
     - Your implementation must precisely match the function's described purpose from the docstring. Do not add extra features or logic.
+
+    **LAW #5: CLEAN CODE, NOT COMMENTED CODE.**
+    - Your code should be clean, professional, and self-documenting.
+    - You are STRICTLY FORBIDDEN from writing `#` comments that explain the business logic of the line that follows. This is a sign of junior-level code.
+    - Use comments only for genuinely complex or non-obvious logic. Standard operations should NOT have comments.
+    - **INCORRECT (Goofy) Example:**
+      ```python
+      # Get the user's name from the data
+      name = data.get('name')
+      # Return the name
+      return name
+      ```
+    - **CORRECT (Professional) Example:**
+      ```python
+      name = data.get('name')
+      return name
+      ```
 
     {RAW_CODE_OUTPUT_RULE}
 
