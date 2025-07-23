@@ -92,6 +92,10 @@ class EventCoordinator:
         self.event_bus.subscribe("workflow_finalized", lambda final_code: visualizer.display_existing_project(
             self.service_manager.project_manager.active_project_path))
 
+        # --- NEW: Connect animation events ---
+        self.event_bus.subscribe("agent_activity_started", visualizer._handle_agent_activity)
+        self.event_bus.subscribe("ai_workflow_finished", visualizer._deactivate_all_connections)
+
         logger.info("Project Visualizer events wired.")
 
     def _wire_lsp_events(self) -> None:

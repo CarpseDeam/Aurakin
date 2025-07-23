@@ -58,6 +58,12 @@ class ReviewService(BaseGenerationService):
                 self.log("warning", f"Reviewer tried to edit non-existent file: {filename}")
                 continue
 
+            # NEW event for visualizer
+            if self.project_manager and self.project_manager.active_project_path:
+                abs_path_str = str(self.project_manager.active_project_path / filename)
+                self.event_bus.emit("agent_activity_started", "Architect", abs_path_str)
+
+
             self.event_bus.emit("highlight_lines_for_edit", filename, start, end)
             await asyncio.sleep(0.75)
             self.event_bus.emit("delete_highlighted_lines", filename)

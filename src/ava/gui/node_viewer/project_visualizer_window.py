@@ -32,60 +32,13 @@ from src.ava.core.event_bus import EventBus
 from src.ava.core.project_manager import ProjectManager
 from src.ava.gui.components import Colors
 from src.ava.gui.node_viewer.project_node import ProjectNode
+from src.ava.gui.node_viewer.animated_connection import AnimatedConnection
 
 logger = logging.getLogger(__name__)
 
 # --- Layout Constants ---
 COLUMN_WIDTH = 300
 ROW_HEIGHT = 90
-
-
-class ConnectionItem(QGraphicsPathItem):
-    """A directed connection line with an arrowhead, linking two nodes."""
-
-    def __init__(self, start_node: QGraphicsObject, end_node: QGraphicsObject):
-        super().__init__()
-        self.start_node = start_node
-        self.end_node = end_node
-        self.arrow_head = QPolygonF()
-        pen = QPen(QColor("#555"), 2.0, Qt.PenStyle.SolidLine)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-        self.setPen(pen)
-        self.setZValue(-1)
-        self.update_path()
-
-    def update_path(self) -> None:
-        start_pos = self.start_node.pos() + QPointF(self.start_node.boundingRect().width(),
-                                                    self.start_node.boundingRect().height() / 2)
-        end_pos = self.end_node.pos() + QPointF(0, self.end_node.boundingRect().height() / 2)
-
-        path = QPainterPath(start_pos)
-        offset = (end_pos.x() - start_pos.x()) * 0.5
-        c1 = QPointF(start_pos.x() + offset, start_pos.y())
-        c2 = QPointF(end_pos.x() - offset, end_pos.y())
-        path.cubicTo(c1, c2, end_pos)
-
-        self.setPath(path)
-        self._update_arrowhead(path, end_pos)
-
-    def _update_arrowhead(self, path: QPainterPath, end_point: QPointF) -> None:
-        angle_rad = math.radians(180 - path.angleAtPercent(1.0))
-        arrow_size = 10.0
-        arrow_p1 = end_point + QPointF(math.cos(angle_rad - math.pi / 6) * arrow_size,
-                                       math.sin(angle_rad - math.pi / 6) * arrow_size)
-        arrow_p2 = end_point + QPointF(math.cos(angle_rad + math.pi / 6) * arrow_size,
-                                       math.sin(angle_rad + math.pi / 6) * arrow_size)
-        self.arrow_head.clear()
-        self.arrow_head.append(end_point)
-        self.arrow_head.append(arrow_p1)
-        self.arrow_head.append(arrow_p2)
-
-    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: Optional[QWidget] = None) -> None:
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        super().paint(painter, option, widget)
-        painter.setBrush(QBrush(QColor("#555")))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawPolygon(self.arrow_head)
 
 
 class ProjectVisualizerWindow(QMainWindow):
@@ -96,6 +49,8 @@ class ProjectVisualizerWindow(QMainWindow):
         self.event_bus = event_bus
         self.project_manager = project_manager
         self.nodes: Dict[str, ProjectNode] = {}
+        self.connections: Dict[str, AnimatedConnection] = {}  # Map path -> incoming connection
+        self._active_connection: Optional[AnimatedConnection] = None
         self._positions: Dict[str, QPointF] = {}
 
         self.setWindowTitle("Project Visualizer")
@@ -153,13 +108,15 @@ class ProjectVisualizerWindow(QMainWindow):
             self.nodes[current_path_str] = node
             self.scene.addItem(node)
             node.setPos(self._positions[current_path_str])
-            self._draw_connection(parent_node, node)
+            self._draw_connection(parent_node, node, current_path_str)
             if children:
                 self._create_nodes_recursively(children, current_path, node)
 
     def _clear_scene(self) -> None:
         self.scene.clear()
         self.nodes.clear()
+        self.connections.clear()
+        self._active_connection = None
         self._positions.clear()
 
     def _fit_view_with_padding(self) -> None:
@@ -169,12 +126,42 @@ class ProjectVisualizerWindow(QMainWindow):
         rect.adjust(-padding, -padding, padding, padding)
         self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
-    def _draw_connection(self, start_node: QGraphicsObject, end_node: QGraphicsObject) -> ConnectionItem:
-        connection = ConnectionItem(start_node, end_node)
+    def _draw_connection(self, start_node: QGraphicsObject, end_node: QGraphicsObject,
+                         end_node_path: str) -> AnimatedConnection:
+        connection = AnimatedConnection(start_node, end_node)
         self.scene.addItem(connection)
         start_node.add_connection(connection, is_outgoing=True)
         end_node.add_connection(connection, is_outgoing=False)
+        self.connections[end_node_path] = connection
         return connection
+
+    def _handle_agent_activity(self, agent_name: str, target_file_path: str):
+        """Activates the animation for a specific connection."""
+        self.log("info", f"Visualizing activity for Agent: {agent_name} on file: {Path(target_file_path).name}")
+
+        if self._active_connection:
+            self._active_connection.deactivate()
+            self._active_connection = None
+
+        connection = self.connections.get(target_file_path)
+        if not connection:
+            self.log("warning", f"Could not find a connection for file path: {target_file_path}")
+            return
+
+        color = Colors.AGENT_ARCHITECT_COLOR
+        if agent_name.lower() == "coder":
+            color = Colors.AGENT_CODER_COLOR
+
+        connection.activate(color)
+        self._active_connection = connection
+
+    def _deactivate_all_connections(self):
+        """Turns off any active animations."""
+        self.log("info", "Workflow finished. Deactivating all visualizer connections.")
+        if self._active_connection:
+            self._active_connection.deactivate()
+            self._active_connection = None
+
 
     def _build_tree_from_paths(self, paths: List[str]) -> Dict:
         tree = {}

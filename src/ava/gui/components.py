@@ -23,6 +23,10 @@ class Colors:
     ACCENT_RED = QColor("#f85149")  # For error states
     ACCENT_PURPLE = QColor("#8957e5") # NEW: For Aura creative mode
 
+    # --- Agent Colors for Visualizer ---
+    AGENT_ARCHITECT_COLOR = QColor("#8957e5")  # Purple
+    AGENT_CODER_COLOR = QColor("#ffa500")      # Orange (same as ACCENT_BLUE)
+
     # Transparent background for highlighting lines in the editor
     DIFF_ADD_BG = QColor(46, 160, 67, 40)  # More subtle green highlight
 

@@ -41,6 +41,11 @@ class ImplementationService(BaseGenerationService):
             self.event_bus.emit("agent_status_changed", "Coder",
                                 f"({i + 1}/{len(tasks_to_fill)}) Implementing {func_def['name']}", "fa5s.code")
 
+            # NEW event for visualizer
+            if self.project_manager and self.project_manager.active_project_path:
+                abs_path_str = str(self.project_manager.active_project_path / filename)
+                self.event_bus.emit("agent_activity_started", "Coder", abs_path_str)
+
             prompt = CODER_FILL_PROMPT.format(
                 project_scaffold=project_scaffold_json,
                 filename=filename,
@@ -68,7 +73,7 @@ class ImplementationService(BaseGenerationService):
                 for char in text_to_insert:
                     self.event_bus.emit("stream_text_at_cursor", filename, char)
                     await asyncio.sleep(0.005)  # Very short delay for typing feel
-                await asyncio.sleep(0.2) # Pause after typing
+                await asyncio.sleep(0.2)  # Pause after typing
 
                 # --- Internal State Update ---
                 # Now that the animation is done, update our internal representation of the code.

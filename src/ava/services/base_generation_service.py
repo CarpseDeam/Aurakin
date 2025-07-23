@@ -12,6 +12,7 @@ class BaseGenerationService:
         self.service_manager = service_manager
         self.event_bus = event_bus
         self.llm_client = service_manager.get_llm_client()
+        self.project_manager = service_manager.get_project_manager()
 
     def log(self, level: str, message: str, **kwargs):
         """Helper to emit log messages."""
