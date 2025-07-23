@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QRect, QSize, Signal
 from PySide6.QtGui import QColor, QPainter, QTextFormat, QTextCursor, QFont, QKeySequence, QShortcut, QTextCharFormat
 from typing import Dict, List, Any
 
-from src.ava.gui.components import Colors, Typography
+from src.ava.gui.components import Typography, Colors
 
 logger = logging.getLogger(__name__)
 
@@ -285,11 +285,15 @@ class EnhancedCodeEditor(QPlainTextEdit):
 
     def highlight_line_range(self, start_line: int, end_line: int):
         """
-        Highlights a range of lines to indicate a pending change, typically before a deletion.
-        This replaces the old 'animate_line_highlight' for clarity.
+        Highlights a range of lines and ensures the start of the range is visible.
         """
         self.animation_selections.clear()
-        logger.info(f"Highlighting lines {start_line}-{end_line} for animation.")
+        logger.info(f"Highlighting lines {start_line}-{end_line} and ensuring visibility.")
+
+        # --- THIS IS THE FIX ---
+        # Move cursor to the start of the highlight to ensure it's visible.
+        self.set_cursor_position(start_line, 0)
+        # --- END FIX ---
 
         for line_num in range(start_line, end_line + 1):
             selection = QTextEdit.ExtraSelection()
@@ -339,7 +343,7 @@ class EnhancedCodeEditor(QPlainTextEdit):
             return
 
         # Clamp column to be within the line's length
-        col = min(col, block.length() - 1)
+        col = min(col, block.length())
         cursor.setPosition(block.position() + col)
         self.setTextCursor(cursor)
         self.ensureCursorVisible()

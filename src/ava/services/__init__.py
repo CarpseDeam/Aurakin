@@ -10,6 +10,10 @@ from .lsp_client_service import LSPClientService
 from .project_analyzer import ProjectAnalyzer
 from .project_indexer_service import ProjectIndexerService
 from .rag_service import RAGService
+from .response_validator_service import ResponseValidatorService
+from .scaffolding_service import ScaffoldingService
+from .implementation_service import ImplementationService
+from .review_service import ReviewService
 
 
 __all__ = [
@@ -24,4 +28,8 @@ __all__ = [
     "ProjectAnalyzer",
     "ProjectIndexerService",
     "RAGService",
+    "ResponseValidatorService",
+    "ScaffoldingService",
+    "ImplementationService",
+    "ReviewService",
 ]

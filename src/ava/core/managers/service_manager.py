@@ -221,27 +221,29 @@ class ServiceManager:
                 self.log_to_event_bus("error", f"Failed to launch LSP server: {e}\n{traceback.format_exc()}")
 
     def terminate_background_servers(self):
+        """Terminates background servers forcefully and waits for them."""
         self.log_to_event_bus("info", "[ServiceManager] Terminating background servers...")
         servers = {"LLM": self.llm_server_process, "RAG": self.rag_server_process, "LSP": self.lsp_server_process}
         for name, process in servers.items():
             if process and process.poll() is None:
-                self.log_to_event_bus("info", f"[ServiceManager] Terminating {name} server (PID: {process.pid})...")
-                process.terminate()
+                self.log_to_event_bus("info", f"[ServiceManager] Killing {name} server (PID: {process.pid})...")
                 try:
-                    process.wait(timeout=5)
-                    self.log_to_event_bus("info", f"[ServiceManager] {name} server terminated.")
-                except subprocess.TimeoutExpired:
-                    self.log_to_event_bus("warning",
-                                          f"[ServiceManager] {name} server did not terminate gracefully. Killing.")
                     process.kill()
+                    # Wait for a short moment to allow the OS to clean up the process
+                    process.wait(timeout=2)
+                    self.log_to_event_bus("info", f"[ServiceManager] {name} server process terminated.")
+                except subprocess.TimeoutExpired:
+                    self.log_to_event_bus("warning", f"[ServiceManager] {name} server did not exit after kill signal.")
                 except Exception as e:
-                    self.log_to_event_bus("error", f"[ServiceManager] Error during {name} server termination: {e}")
+                    self.log_to_event_bus("error", f"[ServiceManager] Error killing {name} server: {e}")
         self.llm_server_process = self.rag_server_process = self.lsp_server_process = None
-        self.log_to_event_bus("info", "[ServiceManager] Background server processes set to None.")
+        self.log_to_event_bus("info", "[ServiceManager] Background server process handles set to None.")
+
 
     async def shutdown(self):
         self.log_to_event_bus("info", "[ServiceManager] Shutting down services...")
         if self.lsp_client_service: await self.lsp_client_service.shutdown()
+        # This is now a synchronous call, but it's much faster and more reliable.
         self.terminate_background_servers()
         if self.plugin_manager and hasattr(self.plugin_manager, 'shutdown'):
             try:

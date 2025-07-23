@@ -47,11 +47,24 @@ DOCSTRING_RULE = """
 - Function/method docstrings must describe the function's purpose, its arguments (`Args:`), and what it returns (`Returns:`).
 """
 
-# NEW RULE FOR CODE QUALITY
+# SUPERCHARGED RULE FOR CODE QUALITY ACROSS ALL DOMAINS
 SENIOR_DEV_PRINCIPLES_RULE = textwrap.dedent("""
-    **LAW: SENIOR DEVELOPER PRINCIPLES.**
-    - **Robustness:** Always include error handling (e.g., `try...except` blocks) for file operations, network requests, or potential `KeyError` exceptions.
-    - **Clarity:** Use clear, descriptive variable and function names.
-    - **Modularity:** Prefer smaller, single-purpose functions. If a function is doing more than one thing, it should be broken down.
-    - **Qt Best Practices:** When writing PySide6 code, use the signal and slot mechanism for communication. Block signals when programmatically changing widget states to prevent infinite loops (e.g., `widget.blockSignals(True)`).
+    **LAW: SENIOR DEVELOPER PRINCIPLES - YOU MUST ADHERE TO THESE AT ALL TIMES.**
+
+    1.  **ROBUSTNESS & ERROR HANDLING:**
+        -   **NEVER trust external inputs or resources.** Aggressively use `try...except` blocks for file operations (`FileNotFoundError`, `IOError`), network requests (`requests.exceptions.RequestException`), and dictionary key access (`KeyError`).
+        -   **Configuration Management:** For API keys, database URLs, or other secrets, your code should read from environment variables using `os.getenv('MY_VARIABLE')`. Never hardcode secrets.
+        -   **Graceful Failure:** Your code should anticipate potential failures and handle them gracefully, logging errors instead of crashing.
+
+    2.  **MAINTAINABILITY & CLARITY:**
+        -   **Single Responsibility Principle (SRP):** Every function and class should do ONE thing and do it well. If a function is named `get_user_and_update_avatar`, it should be split into two separate functions.
+        -   **Descriptive Naming:** Use clear, unambiguous names for variables, functions, and classes. `user_profile` is better than `data`.
+        -   **Modularity:** Group related functions into separate files (modules). Create services for business logic, models for data structures, and utils for common helpers.
+
+    3.  **MODERN & EFFICIENT PYTHON:**
+        -   **Always prefer `pathlib.Path` over `os.path`** for all file system operations. It is cleaner and object-oriented.
+        -   **Use Dataclasses:** For simple data-holding objects, always prefer `@dataclass` for its conciseness and power.
+        -   **Use F-strings:** All string formatting must use f-strings (e.g., `f"Hello, {{name}}"`).
+        -   **Dependency Management:** All external libraries MUST be listed in a `requirements.txt` file.
+        -   **Data Validation:** For backends or data processing, use a library like Pydantic to define and validate data models to prevent bad data from entering your system.
     """)
