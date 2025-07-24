@@ -1,11 +1,11 @@
 # src/ava/services/implementation_service.py
 import asyncio
 import json
-import re  # Import regular expressions
+import re
 from typing import Dict, Any, Optional, List, Tuple
 
 from src.ava.core.event_bus import EventBus
-from src.ava.prompts import CODER_IMPLEMENT_MARKER_PROMPT  # Use the new Coder prompt
+from src.ava.prompts import CODER_IMPLEMENT_MARKER_PROMPT
 from src.ava.services.base_generation_service import BaseGenerationService
 
 
@@ -29,17 +29,22 @@ class ImplementationService(BaseGenerationService):
         all_tasks = []
         for filename, content in blueprint_files.items():
             if filename.endswith('.py'):
-                for match in self.TASK_MARKER_REGEX.finditer(content):
-                    indentation = match.group(1)
-                    description = match.group(2)
-                    all_tasks.append((filename, indentation, description, match.group(0)))
+                # We need to find the line number for each match
+                lines = content.splitlines()
+                for i, line in enumerate(lines):
+                    match = self.TASK_MARKER_REGEX.match(line)
+                    if match:
+                        line_number = i + 1
+                        indentation = match.group(1)
+                        description = match.group(2)
+                        all_tasks.append((filename, indentation, description, line.strip(), line_number))
 
         if not all_tasks:
             self.log("warning", "No implementation tasks found in the blueprint.")
             return implemented_code
 
         # Process tasks serially
-        for i, (filename, indentation, description, full_marker_line) in enumerate(all_tasks):
+        for i, (filename, indentation, description, full_marker_line, line_number) in enumerate(all_tasks):
             self.log("info", f"Coder starting task ({i + 1}/{len(all_tasks)}): {description[:80]}...")
             self.event_bus.emit("agent_status_changed", "Coder", f"({i + 1}/{len(all_tasks)}) {description[:50]}...",
                                 "fa5s.code")
@@ -59,19 +64,37 @@ class ImplementationService(BaseGenerationService):
                          f"Coder failed to provide an implementation for '{description}'. Task marker will be kept.")
                 continue
 
-            # --- THE NEW, ROBUST IMPLEMENTATION LOGIC ---
-            # Indent the Coder's response to match the marker's indentation level
+            # --- BRINGING BACK THE ANIMATION! ---
+            # 1. Highlight the task marker line that will be replaced.
+            self.event_bus.emit("highlight_lines_for_edit", filename, line_number, line_number)
+            await asyncio.sleep(0.4)
+
+            # 2. Delete the highlighted line.
+            self.event_bus.emit("delete_highlighted_lines", filename)
+            await asyncio.sleep(0.2)
+
+            # 3. Stream in the new, correctly indented code.
             indented_body_lines = [f"{indentation}{line}" for line in function_body.splitlines()]
-            final_code_block = "\n".join(indented_body_lines)
+            text_to_insert = "\n".join(indented_body_lines)
 
-            # Perform a simple, direct string replacement
-            current_file_content = implemented_code[filename]
-            implemented_code[filename] = current_file_content.replace(full_marker_line, final_code_block, 1)
+            for char in text_to_insert:
+                self.event_bus.emit("stream_text_at_cursor", filename, char)
+                await asyncio.sleep(0.005)
+            await asyncio.sleep(0.2)
 
-            # --- UI UPDATE (Simplified) ---
-            # Instead of complex animations, we now just update the whole file at once.
-            # This is more robust and avoids the bugs we were seeing.
-            self.event_bus.emit("file_content_updated", filename, implemented_code[filename])
-            await asyncio.sleep(0.5)  # A small delay to make the UI feel responsive
+            # --- UPDATE INTERNAL STATE ROBUSTLY ---
+            # Instead of a simple replace, we rebuild the file from lines to be 100% sure.
+            # This avoids any issues if the same marker appears twice.
+            lines = implemented_code[filename].splitlines()
+            # Find the line with the marker and replace it
+            for line_idx, line_content in enumerate(lines):
+                if line_content.strip() == full_marker_line:
+                    lines[line_idx:line_idx + 1] = indented_body_lines
+                    break
+
+            implemented_code[filename] = "\n".join(lines)
+
+            # Finalize the editor content
+            self.event_bus.emit("finalize_editor_content", filename)
 
         return implemented_code
