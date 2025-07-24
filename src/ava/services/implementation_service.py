@@ -54,41 +54,42 @@ class ImplementationService(BaseGenerationService):
             )
             function_body = await self._call_llm_agent(prompt, "coder")
 
-            if function_body:
-                # --- UI Animation Sequence ---
-                # 1. Highlight the 'pass' statement that will be replaced.
-                self.event_bus.emit("highlight_lines_for_edit", filename, func_def['pass_start_line'],
-                                    func_def['pass_end_line'])
-                await asyncio.sleep(0.4)  # Perceptible pause
-
-                # 2. Delete the highlighted 'pass' statement. The editor's cursor will be left at this position.
-                self.event_bus.emit("delete_highlighted_lines", filename)
-                await asyncio.sleep(0.2)  # Perceptible pause
-
-                # 3. "Type" the new code in character-by-character for a live effect.
-                indentation = ' ' * func_def['col_offset']
-                indented_body_lines = [f"{indentation}{line}" for line in function_body.splitlines()]
-                text_to_insert = "\n".join(indented_body_lines)
-
-                for char in text_to_insert:
-                    self.event_bus.emit("stream_text_at_cursor", filename, char)
-                    await asyncio.sleep(0.005)  # Very short delay for typing feel
-                await asyncio.sleep(0.2)  # Pause after typing
-
-                # --- Internal State Update ---
-                # Now that the animation is done, update our internal representation of the code.
-                lines = implemented_code[filename].splitlines()
-                pass_statement_line_index = func_def['pass_start_line'] - 1
-                lines[pass_statement_line_index:pass_statement_line_index + 1] = indented_body_lines
-                implemented_code[filename] = "\n".join(lines)
-
-                # --- Finalize UI State ---
-                # Tell the editor that the animated changes are now the "saved" (canonical) state.
-                self.event_bus.emit("finalize_editor_content", filename)
-
-            else:
+            # If the AI returns no body, log it and skip, leaving the 'pass' intact.
+            if not function_body or not function_body.strip():
                 self.log("warning",
                          f"Coder failed to provide a body for {func_def['name']} in {filename}. 'pass' will be kept.")
+                continue
+
+            # --- UI Animation Sequence ---
+            # 1. Highlight the 'pass' statement that will be replaced.
+            self.event_bus.emit("highlight_lines_for_edit", filename, func_def['pass_start_line'],
+                                func_def['pass_end_line'])
+            await asyncio.sleep(0.4)  # Perceptible pause
+
+            # 2. Delete the highlighted 'pass' statement. The editor's cursor will be left at this position.
+            self.event_bus.emit("delete_highlighted_lines", filename)
+            await asyncio.sleep(0.2)  # Perceptible pause
+
+            # 3. "Type" the new code in character-by-character for a live effect.
+            indentation = ' ' * func_def['col_offset']
+            indented_body_lines = [f"{indentation}{line}" for line in function_body.splitlines()]
+            text_to_insert = "\n".join(indented_body_lines)
+
+            for char in text_to_insert:
+                self.event_bus.emit("stream_text_at_cursor", filename, char)
+                await asyncio.sleep(0.005)  # Very short delay for typing feel
+            await asyncio.sleep(0.2)  # Pause after typing
+
+            # --- Internal State Update ---
+            # Now that the animation is done, update our internal representation of the code.
+            lines = implemented_code[filename].splitlines()
+            pass_statement_line_index = func_def['pass_start_line'] - 1
+            lines[pass_statement_line_index:pass_statement_line_index + 1] = indented_body_lines
+            implemented_code[filename] = "\n".join(lines)
+
+            # --- Finalize UI State ---
+            # Tell the editor that the animated changes are now the "saved" (canonical) state.
+            self.event_bus.emit("finalize_editor_content", filename)
 
         return implemented_code
 
@@ -102,26 +103,34 @@ class ImplementationService(BaseGenerationService):
                 tree = ast.parse(content)
                 for node in ast.walk(tree):
                     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        non_docstring_nodes = [
-                            n for n in node.body
-                            if not (isinstance(n, ast.Expr) and isinstance(n.value, (ast.Constant, ast.Str)))
-                        ]
 
-                        if len(non_docstring_nodes) == 1 and isinstance(non_docstring_nodes[0], ast.Pass):
-                            pass_node = non_docstring_nodes[0]
+                        # --- THIS IS THE NEW, ROBUST LOGIC ---
+                        docstring = ast.get_docstring(node)
 
-                            # --- THE FIX: Use the docstring as the description ---
-                            docstring = ast.get_docstring(node) or f"Implement the {node.name} function."
+                        # Determine the part of the body that is NOT the docstring
+                        body_after_docstring = node.body
+                        if docstring is not None:
+                            # The docstring is always the first element if it exists
+                            body_after_docstring = node.body[1:]
+
+                        # Check if the remaining body is *exactly* one 'pass' statement
+                        if len(body_after_docstring) == 1 and isinstance(body_after_docstring[0], ast.Pass):
+                            pass_node = body_after_docstring[0]
+
+                            # Use the found docstring, or create a default description
+                            description = docstring or f"Implement the {node.name} function."
 
                             func_def = {
                                 "name": node.name,
                                 "signature": ast.get_source_segment(content, node).split(':\n')[0],
-                                "description": docstring,
+                                "description": description,
                                 "pass_start_line": pass_node.lineno,
                                 "pass_end_line": pass_node.end_lineno,
                                 "col_offset": pass_node.col_offset
                             }
                             fill_tasks.append((filename, func_def))
+                        # --- END OF NEW LOGIC ---
+
             except Exception as e:
                 self.log("error", f"Failed to parse scaffold file {filename} for implementation: {e}")
         return fill_tasks

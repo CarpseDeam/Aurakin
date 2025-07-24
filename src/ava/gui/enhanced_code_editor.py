@@ -290,10 +290,7 @@ class EnhancedCodeEditor(QPlainTextEdit):
         self.animation_selections.clear()
         logger.info(f"Highlighting lines {start_line}-{end_line} and ensuring visibility.")
 
-        # --- THIS IS THE FIX ---
-        # Move cursor to the start of the highlight to ensure it's visible.
         self.set_cursor_position(start_line, 0)
-        # --- END FIX ---
 
         for line_num in range(start_line, end_line + 1):
             selection = QTextEdit.ExtraSelection()
@@ -324,10 +321,11 @@ class EnhancedCodeEditor(QPlainTextEdit):
 
         # Sort selections from bottom to top to not invalidate cursor positions during deletion
         for selection in sorted(self.animation_selections, key=lambda s: s.cursor.position(), reverse=True):
-            # Create a new cursor for the selection to be deleted
-            delete_cursor = QTextCursor(self.document())
-            delete_cursor.setPosition(selection.cursor.selectionStart())
-            delete_cursor.setPosition(selection.cursor.selectionEnd(), QTextCursor.MoveMode.KeepAnchor)
+            delete_cursor = selection.cursor
+
+            delete_cursor.select(QTextCursor.BlockUnderCursor)
+
+
             delete_cursor.removeSelectedText()
 
         cursor.endEditBlock()

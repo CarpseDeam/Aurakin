@@ -87,12 +87,6 @@ async def main_async_logic(app_instance, root_path: Path):
             QMessageBox.critical(None, "Startup Error", f"Failed to start Avakin.\n\nError: {e}")
         except Exception as msg_e:
             print(f"Could not show error message box: {msg_e}", file=sys.stderr)
-    finally:
-        print("[main] Main async logic has finished. Exiting.")
-        # Ensure the application instance quits if it hasn't already.
-        if not shutdown_future.done():
-            shutdown_future.set_result(True)
-        QApplication.instance().quit()
 
 
 if __name__ == "__main__":

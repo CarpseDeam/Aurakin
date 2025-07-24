@@ -3,6 +3,7 @@ import logging
 import math
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from collections import defaultdict
 from PySide6.QtCore import (
     QPointF,
     QRectF,
@@ -17,6 +18,7 @@ from PySide6.QtGui import (
     QPen,
     QPolygonF,
     QCloseEvent,
+    QWheelEvent,
 )
 from PySide6.QtWidgets import (
     QGraphicsObject,
@@ -36,9 +38,33 @@ from src.ava.gui.node_viewer.animated_connection import AnimatedConnection
 
 logger = logging.getLogger(__name__)
 
-# --- Layout Constants ---
+# --- MODIFIED: Layout Constants are now flexible guides ---
 COLUMN_WIDTH = 300
-ROW_HEIGHT = 90
+MIN_ROW_HEIGHT = 70
+MAX_ROW_HEIGHT = 120
+TARGET_SCENE_HEIGHT = 2000  # A virtual canvas height to calculate spacing against
+
+
+# --- Custom QGraphicsView with Zooming ---
+class ZoomableView(QGraphicsView):
+    """A QGraphicsView that supports zooming with the mouse wheel."""
+    def __init__(self, scene, parent=None):
+        super().__init__(scene, parent)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+
+    def wheelEvent(self, event: QWheelEvent):
+        """Handle mouse wheel events for zooming."""
+        zoom_in_factor = 1.15
+        zoom_out_factor = 1 / zoom_in_factor
+
+        # Get the direction of the scroll
+        if event.angleDelta().y() > 0:
+            zoom_factor = zoom_in_factor
+        else:
+            zoom_factor = zoom_out_factor
+
+        self.scale(zoom_factor, zoom_factor)
 
 
 class ProjectVisualizerWindow(QMainWindow):
@@ -57,13 +83,15 @@ class ProjectVisualizerWindow(QMainWindow):
         self.setGeometry(150, 150, 1200, 800)
         self.scene = QGraphicsScene()
         self.scene.setBackgroundBrush(QColor(Colors.PRIMARY_BG))
-        self.view = QGraphicsView(self.scene)
+
+        self.view = ZoomableView(self.scene)
+
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.setCentralWidget(self.view)
 
     def display_scaffold(self, scaffold_files: Dict[str, str]):
-        """NEW: Renders the entire project structure from the scaffold."""
+        """Renders the entire project structure from the scaffold."""
         if not self.project_manager.active_project_path: return
         self.log("info", "Visualizer received project scaffold. Drawing node structure.")
 
@@ -169,7 +197,6 @@ class ProjectVisualizerWindow(QMainWindow):
         for p_str in paths:
             path_obj = Path(p_str)
             all_paths.add(p_str)
-            # Add all parent directories to ensure the tree is complete
             for parent in path_obj.parents:
                 if str(parent) != '.':
                     all_paths.add(str(parent))
@@ -194,8 +221,27 @@ class ProjectVisualizerWindow(QMainWindow):
             return {}
         return tree
 
+    # --- NEW: Helper to count nodes at each depth ---
+    def _get_level_counts(self, tree: Dict, level=0, counts=None) -> Dict[int, int]:
+        """Recursively counts the number of nodes at each level of the tree."""
+        if counts is None:
+            counts = defaultdict(int)
+        for children in tree.values():
+            counts[level] += 1
+            if children:
+                self._get_level_counts(children, level + 1, counts)
+        return counts
+
+    # --- MODIFIED: The core layout algorithm is now dynamic ---
     def _calculate_node_positions(self, tree: Dict, root_path: Path) -> Dict[str, QPointF]:
         positions = {}
+        level_counts = self._get_level_counts(tree)
+        max_nodes_in_level = max(level_counts.values()) if level_counts else 1
+
+        # Calculate a dynamic row height based on the densest part of the graph
+        calculated_height = TARGET_SCENE_HEIGHT / max(1, max_nodes_in_level)
+        dynamic_row_height = max(MIN_ROW_HEIGHT, min(MAX_ROW_HEIGHT, calculated_height))
+        self.log("info", f"Dynamic layout: max nodes={max_nodes_in_level}, row height={dynamic_row_height:.2f}px")
 
         def get_subtree_leaf_count(subtree: Dict) -> int:
             if not subtree: return 1
@@ -203,12 +249,12 @@ class ProjectVisualizerWindow(QMainWindow):
 
         def layout_recursively(subtree: Dict, parent_path: Path, parent_center_y: float, depth: int):
             sorted_children = sorted(subtree.items(), key=lambda item: not bool(item[1]))
-            total_height = sum(get_subtree_leaf_count(children) * ROW_HEIGHT for _, children in sorted_children)
+            total_height = sum(get_subtree_leaf_count(children) * dynamic_row_height for _, children in sorted_children)
             current_y = parent_center_y - total_height / 2
             for name, children in sorted_children:
                 item_path = parent_path / name
                 leaf_count = get_subtree_leaf_count(children)
-                node_height = leaf_count * ROW_HEIGHT
+                node_height = leaf_count * dynamic_row_height
                 child_center_y = current_y + node_height / 2
                 positions[str(item_path)] = QPointF(depth * COLUMN_WIDTH, child_center_y)
                 if children:
