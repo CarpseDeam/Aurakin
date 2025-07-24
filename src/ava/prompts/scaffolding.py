@@ -16,11 +16,7 @@ ARCHITECT_BLUEPRINT_PROMPT = textwrap.dedent(f"""
     ---
     **CRITICAL & UNBREAKABLE LAWS OF BLUEPRINT GENERATION**
 
-    **LAW #1: ADHERE TO SENIOR DEVELOPER PRINCIPLES.**
-    You must design the entire project structure and all function/class signatures according to these principles. This is your highest priority.
-    {SENIOR_DEV_PRINCIPLES_RULE}
-
-    **LAW #2: EMBED IMPLEMENTATION TASKS AS MARKERS.**
+    **LAW #1: EMBED IMPLEMENTATION TASKS AS MARKERS.**
     - The body of EVERY function and EVERY method you generate MUST contain ONLY a single, specific comment marker.
     - The marker format is: `# IMPLEMENTATION_TASK: [A clear, single-sentence description of what this function must do]`
     - DO NOT use `pass`. DO NOT write any implementation code. The marker is the ONLY thing allowed in a function body.
@@ -31,9 +27,19 @@ ARCHITECT_BLUEPRINT_PROMPT = textwrap.dedent(f"""
           # IMPLEMENTATION_TASK: Query the database for a user with the given user_id and return a User object.
       ```
 
+    **LAW #2: STRUCTURE THE MAIN ENTRY POINT CORRECTLY.**
+    - If you create a main executable file, it MUST contain a `main()` function.
+    - The implementation task for the application's startup logic MUST go inside this `main()` function.
+    - The file MUST end with the standard Python entry point block:
+      ```python
+      if __name__ == "__main__":
+          main()
+      ```
+    - This `if` block MUST NOT contain a task marker. It must only contain the call to `main()`.
+
     **LAW #3: GUARANTEE SYNTACTIC VALIDITY.**
-    - The entire scaffold you generate MUST be 100% syntactically valid Python. Because the task markers are comments, this should be simple. No syntax errors are permitted.
-    - You MUST include all necessary imports, class definitions, and function/method signatures with full type hinting.
+    - The entire scaffold you generate MUST be 100% syntactically valid Python.
+    - You MUST include all necessary imports, class definitions, and function/method signatures with full type hinting and docstrings.
 
     **LAW #4: EXACT OUTPUT FORMAT.**
     - Your entire response MUST be a single JSON object.
@@ -44,7 +50,7 @@ ARCHITECT_BLUEPRINT_PROMPT = textwrap.dedent(f"""
     - **Correct Example:**
       ```json
       {{{{
-        "main.py": "def run():\\n    # IMPLEMENTATION_TASK: Print 'Hello, World!' to the console.",
+        "main.py": "def main():\\n    # IMPLEMENTATION_TASK: Print 'Hello, World!' to the console.\\n\\nif __name__ == \\"__main__\\":\\n    main()",
         "utils/helpers.py": "def helper():\\n    # IMPLEMENTATION_TASK: Return the integer 1."
       }}}}
       ```
@@ -70,19 +76,23 @@ CODER_IMPLEMENT_MARKER_PROMPT = textwrap.dedent(f"""
 
     **CRITICAL & UNBREAKABLE LAWS OF IMPLEMENTATION:**
 
-    **LAW #1: ADHERE TO SENIOR DEVELOPER PRINCIPLES.**
-    Your implementation code MUST follow these principles perfectly. This is your highest priority.
+    **LAW #1: THE TASK IS THE PRIMARY DIRECTIVE.**
+    - Your implementation MUST precisely and ONLY achieve the goal stated in the **Task Description**.
+    - Do not add features or logic not directly required by the task. This is your highest priority.
+
+    **LAW #2: APPLY SENIOR PRINCIPLES WHERE RELEVANT.**
+    - Use the Senior Developer Principles as a guide to write high-quality code *for the given task*.
+    - If the task is simple (e.g., 'add two numbers'), the code should be simple and pure.
+    - If the task involves file I/O or network requests, apply the error handling principles.
+    - Do NOT insert boilerplate code that is irrelevant to the specific task.
     {SENIOR_DEV_PRINCIPLES_RULE}
 
-    **LAW #2: IMPLEMENT THE BODY ONLY.**
+    **LAW #3: IMPLEMENT THE BODY ONLY.**
     - Your output MUST be ONLY the raw, indented Python code for the function body.
     - Do NOT repeat the `def ...:` line or the docstring. Your code will replace the `# IMPLEMENTATION_TASK:` comment.
 
-    **LAW #3: NO NEW IMPORTS.**
+    **LAW #4: NO NEW IMPORTS.**
     - You are STRICTLY FORBIDDEN from writing any `import` statements. Assume all necessary imports already exist in the file skeleton.
-
-    **LAW #4: ADHERE TO THE STATED TASK.**
-    - Your implementation must precisely match the task description. Do not add extra features or logic.
 
     {RAW_CODE_OUTPUT_RULE}
 

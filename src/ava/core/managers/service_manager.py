@@ -13,7 +13,7 @@ from src.ava.core.llm_client import LLMClient
 from src.ava.core.project_manager import ProjectManager
 from src.ava.core.plugins.plugin_manager import PluginManager
 from src.ava.services import (
-    ActionService, AppStateService, ArchitectService,
+    ActionService, AppStateService,
     ProjectIndexerService, ImportFixerService,
     GenerationCoordinator, RAGService,
     LSPClientService
@@ -41,7 +41,6 @@ class ServiceManager:
         self.action_service: "ActionService" = None
         self.rag_manager: "RAGManager" = None
         self.lsp_client_service: LSPClientService = None
-        self.architect_service: ArchitectService = None
         self.project_indexer_service: ProjectIndexerService = None
         self.import_fixer_service: ImportFixerService = None
         self.generation_coordinator: GenerationCoordinator = None
@@ -91,8 +90,6 @@ class ServiceManager:
             event_bus=self.event_bus
         )
 
-        rag_service_instance = self.rag_manager.rag_service if self.rag_manager else RAGService()
-        self.architect_service = ArchitectService(self.llm_client, rag_service_instance)
         self.action_service = ActionService(self.event_bus, self, None, None)
 
         self.log_to_event_bus("info", "[ServiceManager] Services initialized")
@@ -272,9 +269,6 @@ class ServiceManager:
 
     def get_rag_manager(self) -> "RAGManager":
         return self.rag_manager
-
-    def get_architect_service(self) -> ArchitectService:
-        return self.architect_service
 
     def get_project_indexer_service(self) -> ProjectIndexerService:
         return self.project_indexer_service
