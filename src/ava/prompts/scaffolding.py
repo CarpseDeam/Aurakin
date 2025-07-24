@@ -23,7 +23,13 @@ ARCHITECT_BLUEPRINT_PROMPT = textwrap.dedent(f"""
     **LAW #2: EMBED IMPLEMENTATION TASKS AS MARKERS.**
     - The body of EVERY function and EVERY method you generate MUST contain ONLY a single, specific comment marker.
     - The marker format is: `# IMPLEMENTATION_TASK: [A clear, single-sentence description of what this function must do]`
-    - DO NOT use `pass`. DO NOT write any implementation code. The marker is the ONLY thing allowed in a function body.
+    - You are STRICTLY FORBIDDEN from using `pass`. The marker is the ONLY thing allowed in a function body.
+    - **CORRECT EXAMPLE:**
+      ```python
+      def load_user(user_id: int) -> User:
+          \"\"\"Loads a user from the database.\"\"\"
+          # IMPLEMENTATION_TASK: Query the database for a user with the given user_id and return a User object.
+      ```
 
     **LAW #3: WRITE ACTIONABLE TASK DESCRIPTIONS.**
     - The task description inside the marker MUST be an actionable, imperative command that details the specific logic to be implemented.
@@ -65,30 +71,28 @@ ARCHITECT_BLUEPRINT_PROMPT = textwrap.dedent(f"""
 
 # Prompt for Phase 2: The Coder implements a single task marker.
 CODER_IMPLEMENT_MARKER_PROMPT = textwrap.dedent(f"""
-    You are an expert Python programmer adhering to the highest professional standards. Your mission is to write the implementation for a single, specific task within an existing file.
+    You are an expert Python programmer. Your one and only mission is to write the implementation for a single, specific task.
 
     **CONTEXT: THE FULL FILE YOU ARE EDITING**
-    Here is the complete source code of the file. Use this to understand the surrounding classes, functions, and available imports.
+    Here is the complete source code of the file. Use this to understand the surrounding code.
     ```python
     {{{{file_content}}}}
     ```
     ---
     **YOUR SPECIFIC ASSIGNMENT:**
 
-    -   **Task Description:** `{{{{task_description}}}}`
+    - **Function Signature:** `{{function_signature}}`
+    - **Function Purpose (from Docstring):** `{{function_docstring}}`
+    - **Your Task:** `{{task_description}}`
 
     **CRITICAL & UNBREAKABLE LAWS OF IMPLEMENTATION:**
 
-    **LAW #1: THE TASK IS THE PRIMARY DIRECTIVE.**
-    - Your implementation MUST precisely and ONLY achieve the goal stated in the **Task Description**.
-    - Do not add features or logic not directly required by the task. This is your highest priority.
+    **LAW #1: THE DOCSTRING IS THE CONTRACT.**
+    - Your implementation MUST precisely fulfill the purpose described in the **Function Purpose**.
+    - The code you write must match the **Function Signature**'s parameters and return type. This is your highest priority.
 
-    **LAW #2: APPLY THE S-TIER ENGINEERING PROTOCOL.**
-    - Use the S-Tier Engineering Protocol as a guide to write high-quality code *for the given task*.
-    - If the task is simple (e.g., 'add two numbers'), the code should be simple and pure.
-    - If the task involves file I/O or network requests, apply the error handling principles.
-    - Do NOT insert boilerplate code that is irrelevant to the specific task.
-    {S_TIER_ENGINEERING_PROTOCOL}
+    **LAW #2: THE TASK IS THE SPECIFIC INSTRUCTION.**
+    - The **Your Task** description provides the specific, imperative command you must follow.
 
     **LAW #3: IMPLEMENT THE BODY ONLY.**
     - Your output MUST be ONLY the raw, indented Python code for the function body.
@@ -99,5 +103,5 @@ CODER_IMPLEMENT_MARKER_PROMPT = textwrap.dedent(f"""
 
     {RAW_CODE_OUTPUT_RULE}
 
-    Execute your mission. Write the professional-grade code for the function body now.
+    Execute your mission. Write the code for the function body now.
     """)

@@ -17,6 +17,50 @@ class ImplementationService(BaseGenerationService):
     def __init__(self, service_manager: Any, event_bus: EventBus):
         super().__init__(service_manager, event_bus)
 
+    def _extract_context_for_task(self, lines: List[str], task_line_index: int) -> Dict[str, str]:
+        """
+        Finds the function/class signature and docstring that precedes a task marker.
+        """
+        task_line = lines[task_line_index]
+        task_indentation = len(task_line) - len(task_line.lstrip(' '))
+
+        signature = "Could not determine signature."
+        docstring = "Could not extract docstring."
+        signature_line_index = -1
+
+        # Scan backwards to find the function/class definition
+        for i in range(task_line_index - 1, -1, -1):
+            line = lines[i]
+            stripped_line = line.strip()
+            if stripped_line.startswith(('def ', 'class ')):
+                line_indentation = len(line) - len(line.lstrip(' '))
+                if line_indentation < task_indentation:
+                    signature = stripped_line
+                    signature_line_index = i
+                    break
+
+        # Scan forwards from the definition to find the docstring
+        if signature_line_index != -1:
+            docstring_lines = []
+            in_docstring = False
+            for i in range(signature_line_index + 1, task_line_index):
+                line = lines[i].strip()
+                if line.startswith(('"""', "'''")):
+                    if in_docstring:
+                        in_docstring = False
+                        docstring_lines.append(line)
+                        break
+                    else:
+                        in_docstring = True
+                        docstring_lines.append(line)
+                elif in_docstring:
+                    docstring_lines.append(line)
+
+            if docstring_lines:
+                docstring = "\n".join(docstring_lines)
+
+        return {"signature": signature, "docstring": docstring}
+
     async def execute(self, blueprint_files: Dict[str, str]) -> Optional[Dict[str, str]]:
         """
         Executes the implementation phase by finding and replacing task markers.
@@ -29,7 +73,6 @@ class ImplementationService(BaseGenerationService):
         all_tasks = []
         for filename, content in blueprint_files.items():
             if filename.endswith('.py'):
-                # We need to find the line number for each match
                 lines = content.splitlines()
                 for i, line in enumerate(lines):
                     match = self.TASK_MARKER_REGEX.match(line)
@@ -37,14 +80,15 @@ class ImplementationService(BaseGenerationService):
                         line_number = i + 1
                         indentation = match.group(1)
                         description = match.group(2)
-                        all_tasks.append((filename, indentation, description, line.strip(), line_number))
+                        context = self._extract_context_for_task(lines, i)
+                        all_tasks.append((filename, indentation, description, line.strip(), line_number, context))
 
         if not all_tasks:
             self.log("warning", "No implementation tasks found in the blueprint.")
             return implemented_code
 
         # Process tasks serially
-        for i, (filename, indentation, description, full_marker_line, line_number) in enumerate(all_tasks):
+        for i, (filename, indentation, description, full_marker_line, line_number, context) in enumerate(all_tasks):
             self.log("info", f"Coder starting task ({i + 1}/{len(all_tasks)}): {description[:80]}...")
             self.event_bus.emit("agent_status_changed", "Coder", f"({i + 1}/{len(all_tasks)}) {description[:50]}...",
                                 "fa5s.code")
@@ -55,7 +99,9 @@ class ImplementationService(BaseGenerationService):
 
             prompt = CODER_IMPLEMENT_MARKER_PROMPT.format(
                 file_content=implemented_code[filename],
-                task_description=description
+                task_description=description,
+                function_signature=context['signature'],
+                function_docstring=context['docstring']
             )
             function_body = await self._call_llm_agent(prompt, "coder")
 
@@ -64,37 +110,16 @@ class ImplementationService(BaseGenerationService):
                          f"Coder failed to provide an implementation for '{description}'. Task marker will be kept.")
                 continue
 
-            # --- BRINGING BACK THE ANIMATION! ---
-            # 1. Highlight the task marker line that will be replaced.
-            self.event_bus.emit("highlight_lines_for_edit", filename, line_number, line_number)
-            await asyncio.sleep(0.4)
-
-            # 2. Delete the highlighted line.
-            self.event_bus.emit("delete_highlighted_lines", filename)
-            await asyncio.sleep(0.2)
-
-            # 3. Stream in the new, correctly indented code.
             indented_body_lines = [f"{indentation}{line}" for line in function_body.splitlines()]
-            text_to_insert = "\n".join(indented_body_lines)
 
-            for char in text_to_insert:
-                self.event_bus.emit("stream_text_at_cursor", filename, char)
-                await asyncio.sleep(0.005)
-            await asyncio.sleep(0.2)
-
-            # --- UPDATE INTERNAL STATE ROBUSTLY ---
-            # Instead of a simple replace, we rebuild the file from lines to be 100% sure.
-            # This avoids any issues if the same marker appears twice.
             lines = implemented_code[filename].splitlines()
-            # Find the line with the marker and replace it
             for line_idx, line_content in enumerate(lines):
                 if line_content.strip() == full_marker_line:
                     lines[line_idx:line_idx + 1] = indented_body_lines
                     break
 
             implemented_code[filename] = "\n".join(lines)
-
-            # Finalize the editor content
-            self.event_bus.emit("finalize_editor_content", filename)
+            self.event_bus.emit("file_content_updated", filename, implemented_code[filename])
+            await asyncio.sleep(0.1)  # Small delay for UI to catch up
 
         return implemented_code
