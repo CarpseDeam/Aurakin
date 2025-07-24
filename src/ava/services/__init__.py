@@ -2,6 +2,7 @@
 from .action_service import ActionService
 from .app_state_service import AppStateService
 from .chunking_service import ChunkingService
+from .code_structure_service import CodeStructureService
 from .directory_scanner_service import DirectoryScannerService
 from .generation_coordinator import GenerationCoordinator
 from .import_fixer_service import ImportFixerService
@@ -16,6 +17,7 @@ __all__ = [
     "ActionService",
     "AppStateService",
     "ChunkingService",
+    "CodeStructureService",
     "DirectoryScannerService",
     "GenerationCoordinator",
     "ImportFixerService",

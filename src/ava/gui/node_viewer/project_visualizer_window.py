@@ -1,6 +1,5 @@
 # src/ava/gui/node_viewer/project_visualizer_window.py
 import logging
-import math
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from collections import defaultdict
@@ -14,20 +13,15 @@ from PySide6.QtGui import (
     QBrush,
     QColor,
     QPainter,
-    QPainterPath,
-    QPen,
-    QPolygonF,
     QCloseEvent,
     QWheelEvent,
 )
 from PySide6.QtWidgets import (
     QGraphicsObject,
-    QGraphicsPathItem,
     QGraphicsScene,
     QGraphicsView,
     QMainWindow,
-    QStyleOptionGraphicsItem,
-    QWidget,
+    QMenu,
 )
 
 from src.ava.core.event_bus import EventBus
@@ -35,109 +29,219 @@ from src.ava.core.project_manager import ProjectManager
 from src.ava.gui.components import Colors
 from src.ava.gui.node_viewer.project_node import ProjectNode
 from src.ava.gui.node_viewer.animated_connection import AnimatedConnection
+from src.ava.services.code_structure_service import CodeStructureService
 
 logger = logging.getLogger(__name__)
 
-# --- MODIFIED: Layout Constants are now flexible guides ---
-COLUMN_WIDTH = 300
-MIN_ROW_HEIGHT = 70
-MAX_ROW_HEIGHT = 120
-TARGET_SCENE_HEIGHT = 2000  # A virtual canvas height to calculate spacing against
+COLUMN_WIDTH = 250
+ROW_HEIGHT = 70
 
 
-# --- Custom QGraphicsView with Zooming ---
 class ZoomableView(QGraphicsView):
-    """A QGraphicsView that supports zooming with the mouse wheel."""
+    """A QGraphicsView that supports zooming and right-click context menus."""
+
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
     def wheelEvent(self, event: QWheelEvent):
-        """Handle mouse wheel events for zooming."""
         zoom_in_factor = 1.15
         zoom_out_factor = 1 / zoom_in_factor
-
-        # Get the direction of the scroll
-        if event.angleDelta().y() > 0:
-            zoom_factor = zoom_in_factor
-        else:
-            zoom_factor = zoom_out_factor
-
+        zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
         self.scale(zoom_factor, zoom_factor)
 
 
 class ProjectVisualizerWindow(QMainWindow):
-    """The main window for the project visualizer."""
+    """The main window for the project visualizer, now with deep code inspection."""
 
     def __init__(self, event_bus: EventBus, project_manager: ProjectManager):
         super().__init__()
         self.event_bus = event_bus
         self.project_manager = project_manager
+        self.code_structure_service = CodeStructureService()
         self.nodes: Dict[str, ProjectNode] = {}
-        self.connections: Dict[str, AnimatedConnection] = {}  # Map path -> incoming connection
+        self.connections: Dict[str, AnimatedConnection] = {}
         self._active_connection: Optional[AnimatedConnection] = None
         self._positions: Dict[str, QPointF] = {}
 
-        self.setWindowTitle("Project Visualizer")
+        self.setWindowTitle("Project Visualizer (Test Lab)")
         self.setGeometry(150, 150, 1200, 800)
         self.scene = QGraphicsScene()
         self.scene.setBackgroundBrush(QColor(Colors.PRIMARY_BG))
 
         self.view = ZoomableView(self.scene)
-
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.view.customContextMenuRequested.connect(self._show_context_menu)
         self.setCentralWidget(self.view)
 
+    def _show_context_menu(self, pos):
+        item = self.view.itemAt(pos)
+        if isinstance(item, ProjectNode) and item.node_type == 'function':
+            menu = QMenu(self.view)
+            action = menu.addAction("Generate Unit Tests")
+            action.triggered.connect(lambda: self._request_unit_test_generation(item))
+            menu.exec(self.view.mapToGlobal(pos))
+
+    def _request_unit_test_generation(self, node: ProjectNode):
+        self.log("info", f"User requested unit tests for function: {node.name}")
+        self.event_bus.emit(
+            "unit_test_generation_requested",
+            node.name,
+            node.full_code,
+            node.path
+        )
+        # For now, we just log it. The next step will be to hook this up to the Tester AI.
+        QTimer.singleShot(100,
+                          lambda: self.log("success", "Event 'unit_test_generation_requested' emitted successfully."))
+
     def display_scaffold(self, scaffold_files: Dict[str, str]):
-        """Renders the entire project structure from the scaffold."""
         if not self.project_manager.active_project_path: return
-        self.log("info", "Visualizer received project scaffold. Drawing node structure.")
-
-        self._clear_scene()
-        root_path = self.project_manager.active_project_path
-        all_filenames = list(scaffold_files.keys())
-
-        tree = self._build_tree_from_paths(all_filenames)
-        self._positions = self._calculate_node_positions(tree, root_path)
-
-        root_node = ProjectNode(root_path.name, str(root_path), True)
-        self.nodes[str(root_path)] = root_node
-        self.scene.addItem(root_node)
-        root_node.setPos(self._positions[str(root_path)])
-
-        self._create_nodes_recursively(tree, root_path, root_node)
-        QTimer.singleShot(50, self._fit_view_with_padding)
+        self._render_project_structure(scaffold_files)
 
     def display_existing_project(self, project_path_str: str) -> None:
-        root_path = Path(project_path_str)
-        if not root_path.is_dir(): return
+        project_files = self.project_manager.get_project_files()
+        self._render_project_structure(project_files)
 
+    def _render_project_structure(self, project_files: Dict[str, str]):
+        """The main rendering entry point."""
         self._clear_scene()
-        tree = self._scan_directory_for_tree(root_path)
+        root_path = self.project_manager.active_project_path
+        if not root_path: return
+
+        # Build a hierarchical tree from file paths and code structure
+        tree = self._build_full_code_tree(project_files)
+
+        # Calculate positions for all nodes in the tree
         self._positions = self._calculate_node_positions(tree, root_path)
 
-        root_node = ProjectNode(root_path.name, str(root_path), True)
+        # Create the root node for the project directory
+        root_node = ProjectNode(root_path.name, str(root_path), 'folder')
         self.nodes[str(root_path)] = root_node
         self.scene.addItem(root_node)
         root_node.setPos(self._positions[str(root_path)])
 
+        # Recursively create and draw all child nodes and connections
         self._create_nodes_recursively(tree, root_path, root_node)
         QTimer.singleShot(50, self._fit_view_with_padding)
 
+    def _build_full_code_tree(self, project_files: Dict[str, str]) -> Dict:
+        """Builds a nested dictionary representing the project, including code structure."""
+        tree = {}
+        for path_str, content in project_files.items():
+            parts = Path(path_str).parts
+            level = tree
+            for part in parts:
+                level = level.setdefault(part, {})
+
+            # If it's a Python file, parse its structure
+            if path_str.endswith('.py'):
+                structure = self.code_structure_service.parse_structure(content)
+                level['__structure__'] = structure
+        return tree
+
+    def _calculate_node_positions(self, tree: Dict, root_path: Path) -> Dict[str, QPointF]:
+        """Calculates the X, Y coordinates for every node in the hierarchy."""
+        positions = {}
+        y_map = defaultdict(int)
+
+        def layout_recursively(subtree: Dict, parent_path: Path, depth: int):
+            # Sort to ensure folders come before files
+            sorted_items = sorted(subtree.items(),
+                                  key=lambda item: not isinstance(item[1], dict) or item[0] == '__structure__')
+
+            for name, children in sorted_items:
+                if name == '__structure__': continue
+
+                current_path = parent_path / name
+                current_path_str = str(current_path)
+
+                # Position the file/folder node
+                x = depth * COLUMN_WIDTH
+                y = y_map[depth] * ROW_HEIGHT
+                positions[current_path_str] = QPointF(x, y)
+                y_map[depth] += 1
+
+                # If there's code structure, lay out its children
+                structure = children.get('__structure__')
+                if structure:
+                    y_map[depth + 1] = y_map[depth] - 1  # Align first child
+
+                    for class_name, class_info in structure.get('classes', {}).items():
+                        class_path_str = f"{current_path_str}::{class_name}"
+                        positions[class_path_str] = QPointF(x + COLUMN_WIDTH, y_map[depth + 1] * ROW_HEIGHT)
+                        y_map[depth + 1] += 1
+
+                        for method_name in class_info.get('methods', {}):
+                            method_path_str = f"{class_path_str}::{method_name}"
+                            positions[method_path_str] = QPointF(x + 2 * COLUMN_WIDTH, y_map[depth + 2] * ROW_HEIGHT)
+                            y_map[depth + 2] += 1
+
+                    y_map[depth + 2] = y_map[depth + 1]  # Reset for functions
+                    for func_name in structure.get('functions', {}):
+                        func_path_str = f"{current_path_str}::{func_name}"
+                        positions[func_path_str] = QPointF(x + COLUMN_WIDTH, y_map[depth + 1] * ROW_HEIGHT)
+                        y_map[depth + 1] += 1
+
+                # Recurse into subdirectories
+                if isinstance(children, dict) and children:
+                    layout_recursively(children, current_path, depth + 1)
+                    y_map[depth] = max(y_map[depth], y_map[depth + 1])
+
+        positions[str(root_path)] = QPointF(-COLUMN_WIDTH, 0)
+        layout_recursively(tree, root_path, 0)
+        return positions
+
     def _create_nodes_recursively(self, subtree: Dict, parent_path: Path, parent_node: QGraphicsObject) -> None:
-        sorted_children = sorted(subtree.items(), key=lambda item: not bool(item[1]))
-        for name, children in sorted_children:
+        """Creates and draws all nodes and their connections based on the calculated positions."""
+        sorted_items = sorted(subtree.items(),
+                              key=lambda item: not isinstance(item[1], dict) or item[0] == '__structure__')
+
+        for name, children in sorted_items:
+            if name == '__structure__': continue
+
             current_path = parent_path / name
             current_path_str = str(current_path)
-            is_folder = bool(children)
-            node = ProjectNode(name, current_path_str, is_folder)
+            is_folder = isinstance(children, dict) and '__structure__' not in children
+
+            node_type = 'folder' if is_folder else 'file'
+            node = ProjectNode(name, current_path_str, node_type)
             self.nodes[current_path_str] = node
             self.scene.addItem(node)
             node.setPos(self._positions[current_path_str])
             self._draw_connection(parent_node, node, current_path_str)
-            if children:
+
+            # If there's code structure, render its nodes
+            structure = children.get('__structure__')
+            if structure:
+                file_node = node
+                for class_name, class_info in structure.get('classes', {}).items():
+                    class_path_str = f"{current_path_str}::{class_name}"
+                    class_node = ProjectNode(class_name, current_path_str, 'class', class_info['code'])
+                    self.nodes[class_path_str] = class_node
+                    self.scene.addItem(class_node)
+                    class_node.setPos(self._positions[class_path_str])
+                    self._draw_connection(file_node, class_node, class_path_str)
+
+                    for method_name, method_code in class_info.get('methods', {}).items():
+                        method_path_str = f"{class_path_str}::{method_name}"
+                        method_node = ProjectNode(method_name, current_path_str, 'function', method_code)
+                        self.nodes[method_path_str] = method_node
+                        self.scene.addItem(method_node)
+                        method_node.setPos(self._positions[method_path_str])
+                        self._draw_connection(class_node, method_node, method_path_str)
+
+                for func_name, func_code in structure.get('functions', {}).items():
+                    func_path_str = f"{current_path_str}::{func_name}"
+                    func_node = ProjectNode(func_name, current_path_str, 'function', func_code)
+                    self.nodes[func_path_str] = func_node
+                    self.scene.addItem(func_node)
+                    func_node.setPos(self._positions[func_path_str])
+                    self._draw_connection(file_node, func_node, func_path_str)
+
+            if is_folder and children:
                 self._create_nodes_recursively(children, current_path, node)
 
     def _clear_scene(self) -> None:
@@ -150,7 +254,7 @@ class ProjectVisualizerWindow(QMainWindow):
     def _fit_view_with_padding(self) -> None:
         rect = self.scene.itemsBoundingRect()
         if not rect.isValid(): return
-        padding = 150
+        padding = 50
         rect.adjust(-padding, -padding, padding, padding)
         self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
@@ -164,107 +268,25 @@ class ProjectVisualizerWindow(QMainWindow):
         return connection
 
     def _handle_agent_activity(self, agent_name: str, target_file_path: str):
-        """Activates the animation for a specific connection."""
         self.log("info", f"Visualizing activity for Agent: {agent_name} on file: {Path(target_file_path).name}")
-
         if self._active_connection:
             self._active_connection.deactivate()
-            self._active_connection = None
 
+        # We now connect to the file node, not just any node
         connection = self.connections.get(target_file_path)
         if not connection:
             self.log("warning", f"Could not find a connection for file path: {target_file_path}")
             return
 
-        color = Colors.AGENT_ARCHITECT_COLOR
-        if agent_name.lower() == "coder":
-            color = Colors.AGENT_CODER_COLOR
-
+        color = Colors.AGENT_ARCHITECT_COLOR if agent_name.lower() == "architect" else Colors.AGENT_CODER_COLOR
         connection.activate(color)
         self._active_connection = connection
 
     def _deactivate_all_connections(self):
-        """Turns off any active animations."""
         self.log("info", "Workflow finished. Deactivating all visualizer connections.")
         if self._active_connection:
             self._active_connection.deactivate()
             self._active_connection = None
-
-
-    def _build_tree_from_paths(self, paths: List[str]) -> Dict:
-        tree = {}
-        all_paths = set()
-        for p_str in paths:
-            path_obj = Path(p_str)
-            all_paths.add(p_str)
-            for parent in path_obj.parents:
-                if str(parent) != '.':
-                    all_paths.add(str(parent))
-
-        for p in sorted(list(all_paths)):
-            level = tree
-            for part in Path(p).parts:
-                level = level.setdefault(part, {})
-        return tree
-
-    def _scan_directory_for_tree(self, root_path: Path) -> Dict:
-        tree = {}
-        ignore_dirs = {'.git', '__pycache__', '.venv', 'venv', 'rag_db', '.ava_sessions'}
-        try:
-            for item in sorted(root_path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
-                if item.name in ignore_dirs: continue
-                if item.is_dir():
-                    tree[item.name] = self._scan_directory_for_tree(item)
-                else:
-                    tree[item.name] = {}
-        except FileNotFoundError:
-            return {}
-        return tree
-
-    # --- NEW: Helper to count nodes at each depth ---
-    def _get_level_counts(self, tree: Dict, level=0, counts=None) -> Dict[int, int]:
-        """Recursively counts the number of nodes at each level of the tree."""
-        if counts is None:
-            counts = defaultdict(int)
-        for children in tree.values():
-            counts[level] += 1
-            if children:
-                self._get_level_counts(children, level + 1, counts)
-        return counts
-
-    # --- MODIFIED: The core layout algorithm is now dynamic ---
-    def _calculate_node_positions(self, tree: Dict, root_path: Path) -> Dict[str, QPointF]:
-        positions = {}
-        level_counts = self._get_level_counts(tree)
-        max_nodes_in_level = max(level_counts.values()) if level_counts else 1
-
-        # Calculate a dynamic row height based on the densest part of the graph
-        calculated_height = TARGET_SCENE_HEIGHT / max(1, max_nodes_in_level)
-        dynamic_row_height = max(MIN_ROW_HEIGHT, min(MAX_ROW_HEIGHT, calculated_height))
-        self.log("info", f"Dynamic layout: max nodes={max_nodes_in_level}, row height={dynamic_row_height:.2f}px")
-
-        def get_subtree_leaf_count(subtree: Dict) -> int:
-            if not subtree: return 1
-            return sum(get_subtree_leaf_count(children) for children in subtree.values())
-
-        def layout_recursively(subtree: Dict, parent_path: Path, parent_center_y: float, depth: int):
-            sorted_children = sorted(subtree.items(), key=lambda item: not bool(item[1]))
-            total_height = sum(get_subtree_leaf_count(children) * dynamic_row_height for _, children in sorted_children)
-            current_y = parent_center_y - total_height / 2
-            for name, children in sorted_children:
-                item_path = parent_path / name
-                leaf_count = get_subtree_leaf_count(children)
-                node_height = leaf_count * dynamic_row_height
-                child_center_y = current_y + node_height / 2
-                positions[str(item_path)] = QPointF(depth * COLUMN_WIDTH, child_center_y)
-                if children:
-                    layout_recursively(children, item_path, child_center_y, depth + 1)
-                current_y += node_height
-
-        root_pos = QPointF(-COLUMN_WIDTH / 2, 0)
-        positions[str(root_path)] = root_pos
-        layout_recursively(tree, root_path, root_pos.y(), 1)
-        return positions
 
     def show(self) -> None:
         super().show()

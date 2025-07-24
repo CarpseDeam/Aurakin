@@ -13,14 +13,15 @@ NODE_WIDTH, NODE_HEIGHT, NODE_RADIUS, ICON_SIZE = 150, 45, 8, 20
 
 class ProjectNode(QGraphicsObject):
     """
-    A graphical node representing a file or folder. It handles its own drawing,
-    state changes (hover, selection), and notifies its connections when it moves.
+    A graphical node representing a file, folder, class, or function.
+    It handles its own drawing, state changes, and notifies connections when it moves.
     """
-    def __init__(self, name: str, path: str, is_folder: bool, parent: Optional[QGraphicsItem] = None) -> None:
+    def __init__(self, name: str, path: str, node_type: str, full_code: str = "", parent: Optional[QGraphicsItem] = None) -> None:
         super().__init__(parent)
         self.name = name
         self.path = path
-        self.is_folder = is_folder
+        self.node_type = node_type  # 'folder', 'file', 'class', 'function'
+        self.full_code = full_code
         self._is_hovered = False
         self.incoming_connections: List[Any] = []
         self.outgoing_connections: List[Any] = []
@@ -28,9 +29,16 @@ class ProjectNode(QGraphicsObject):
         self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable)
         self.setAcceptHoverEvents(True)
         self.setCacheMode(QGraphicsItem.CacheMode.DeviceCoordinateCache)
-        self.setToolTip(self.path)
+        self.setToolTip(f"Type: {node_type.title()}\nPath: {self.path}")
 
-        icon_name = "fa5s.folder" if self.is_folder else "fa5s.file-alt"
+        # Define icons for each node type
+        icon_map = {
+            'folder': "fa5s.folder",
+            'file': "fa5b.python",
+            'class': "fa5s.cubes",
+            'function': "fa5s.cogs"
+        }
+        icon_name = icon_map.get(self.node_type, "fa5s.question-circle")
         self.icon = qta.icon(icon_name, color=Colors.TEXT_SECONDARY)
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
@@ -38,13 +46,11 @@ class ProjectNode(QGraphicsObject):
         Overrides the base method to update connection lines when the node is moved.
         This is the core of the "dynamic connections" feature.
         """
-        # --- THIS IS THE FIX ---
         if change == QGraphicsItem.ItemPositionHasChanged:
             for conn in self.incoming_connections:
                 conn.update_path()
             for conn in self.outgoing_connections:
                 conn.update_path()
-        # --- END FIX ---
         return super().itemChange(change, value)
 
     def add_connection(self, connection: Any, is_outgoing: bool) -> None:
