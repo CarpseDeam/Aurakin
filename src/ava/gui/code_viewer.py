@@ -39,7 +39,7 @@ class CodeViewerWindow(QMainWindow):
         self.find_replace_dialog: FindReplaceDialog = None
         self.quick_file_finder: QuickFileFinder = None
 
-        self.setWindowTitle("Kintsugi AvA - Code Viewer")
+        self.setWindowTitle("Code Viewer")
         self.setGeometry(100, 100, 1400, 900)
         self._init_ui()
         self._create_menus()

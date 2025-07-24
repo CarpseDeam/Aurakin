@@ -10,7 +10,7 @@ class LogViewerWindow(QMainWindow):
     def __init__(self, event_bus: EventBus):
         super().__init__()
         self.event_bus = event_bus
-        self.setWindowTitle("Kintsugi AvA - Log Viewer")
+        self.setWindowTitle("Log Viewer")
         self.setGeometry(200, 200, 900, 600)
 
         self.log_view = QTextEdit()
