@@ -52,7 +52,7 @@ class GenerationCoordinator(BaseGenerationService):
         self.event_bus.emit("project_scaffold_generated", {path: "" for path in files_to_create})
         await asyncio.sleep(0.5)
 
-        # --- PHASE 2: ITERATIVE GENERATION ---
+        # --- PHASE 2: ITERATIVE, STREAMING GENERATION ---
         self.log("info", "--- Phase 2: Coder is generating files one by one... ---")
         generated_files: Dict[str, str] = {}
         file_list_str = "\n".join(f"- {f}" for f in files_to_create)
@@ -62,25 +62,43 @@ class GenerationCoordinator(BaseGenerationService):
             self.event_bus.emit("agent_status_changed", "Coder",
                                 f"Writing {target_file} ({i + 1}/{len(files_to_create)})...", "fa5s.code")
 
+            # --- FOCUS AND ANIMATE ---
+            self.event_bus.emit("file_content_updated", target_file, "")  # Create/Focus tab
+            if self.project_manager and self.project_manager.active_project_path:
+                abs_path_str = str(self.project_manager.active_project_path / target_file)
+                self.event_bus.emit("agent_activity_started", "Coder", abs_path_str)
+            await asyncio.sleep(0.1)  # Give UI a moment to react
+            # --- END FOCUS AND ANIMATE ---
+
             coder_prompt = CODER_PROMPT.format(
                 user_request=user_request,
                 file_list=file_list_str,
                 target_file=target_file
             )
 
-            file_content = await self._call_llm_agent(coder_prompt, "coder")
+            # --- STREAM THE CODE ---
+            full_content = ""
+            async for chunk in self._stream_llm_agent_chunks(coder_prompt, "coder"):
+                if chunk.startswith("LLM_API_ERROR:"):
+                    self.log("error", f"Coder agent failed for {target_file}: {chunk}")
+                    full_content = None  # Signal failure
+                    break
+                self.event_bus.emit("stream_text_at_cursor", target_file, chunk)
+                full_content += chunk
+            # --- END STREAM ---
 
-            if file_content is None:
-                self.log("error", f"Coder agent failed to generate code for {target_file}. Aborting generation.")
+            if full_content is None:
+                self.log("error", f"Aborting generation due to API error on {target_file}.")
                 self.event_bus.emit("ai_workflow_finished")
                 return None
 
-            # If Coder returns an empty string for a non-__init__.py file, add a placeholder
-            if not file_content.strip() and not target_file.endswith("__init__.py"):
-                file_content = f'# IMPLEMENTATION_TASK: The AI failed to generate content for this file. Please specify its purpose.'
+            if not full_content.strip() and not target_file.endswith("__init__.py"):
+                placeholder = f'# NOTE: The AI generated an empty file here. You may need to add content.'
+                self.event_bus.emit("stream_text_at_cursor", target_file, placeholder)
+                full_content = placeholder
 
-            generated_files[target_file] = file_content
-            self.event_bus.emit("file_content_updated", target_file, file_content)
+            generated_files[target_file] = full_content
+            self.event_bus.emit("finalize_editor_content", target_file)  # Mark as 'clean'
 
             self.log("info", f"Waiting for 1.1s to respect API rate limits...")
             await asyncio.sleep(1.1)

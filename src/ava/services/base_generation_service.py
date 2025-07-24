@@ -1,6 +1,6 @@
 # src/ava/services/base_generation_service.py
 import re
-from typing import Any, Optional
+from typing import Any, Optional, AsyncGenerator
 
 from src.ava.core.event_bus import EventBus
 
@@ -19,30 +19,40 @@ class BaseGenerationService:
         self.event_bus.emit("log_message_received", self.__class__.__name__, level, message, **kwargs)
 
     async def _call_llm_agent(self, prompt: str, role: str) -> Optional[str]:
-        """Generic LLM call helper."""
+        """
+        Calls an LLM agent and accumulates the entire response into a single string.
+        Used for tasks that require the full response at once (e.g., planning).
+        """
+        response_content = ""
+        try:
+            # Use the new streaming generator and accumulate the results
+            async for chunk in self._stream_llm_agent_chunks(prompt, role):
+                response_content += chunk
+
+            # Check for our specific error token at the end of accumulation.
+            if response_content.startswith("LLM_API_ERROR:"):
+                self.log("error", f"API Error from LLM for role '{role}': {response_content}")
+                return None
+            return response_content
+        except Exception as e:
+            self.log("error", f"Error during LLM call accumulation for role '{role}': {e}", exc_info=True)
+            return None
+
+    async def _stream_llm_agent_chunks(self, prompt: str, role: str) -> AsyncGenerator[str, None]:
+        """
+        Calls an LLM agent and yields response chunks as they arrive.
+        Used for real-time streaming of code generation.
+        """
         provider, model = self.llm_client.get_model_for_role(role)
         if not provider or not model:
             self.log("error", f"No model configured for role '{role}'")
-            return None
+            yield f"LLM_API_ERROR: No model configured for role '{role}'"
+            return
 
-        response_content = ""
         try:
             async for chunk in self.llm_client.stream_chat(provider, model, prompt, role):
-                response_content += chunk
-
-            # --- THIS IS THE FIX ---
-            # Check for our specific error token from the LLM client.
-            if response_content.startswith("LLM_API_ERROR:"):
-                # Log the specific error and return None to signal failure.
-                self.log("error", f"API Error from LLM for role '{role}': {response_content}")
-                return None
-            # --- END OF FIX ---
-
-            # Coder role often wraps code in markdown blocks
-            if role == "coder":
-                match = re.search(r"```(?:[a-zA-Z0-9_]*)?\n(.*?)\n```", response_content, re.DOTALL)
-                return match.group(1).strip() if match else response_content.strip()
-            return response_content
+                # Immediately yield each chunk as it comes in.
+                yield chunk
         except Exception as e:
-            self.log("error", f"Error from LLM for role '{role}': {e}", exc_info=True)
-            return None
+            self.log("error", f"Error streaming from LLM for role '{role}': {e}", exc_info=True)
+            yield f"LLM_API_ERROR: {e}"

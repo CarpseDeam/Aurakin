@@ -30,6 +30,10 @@ PLANNER_PROMPT = textwrap.dedent(f"""
     **LAW #3: DO NOT GENERATE CODE.**
     - You are strictly forbidden from generating any code content. Your only job is to provide the list of file paths.
 
+    **LAW #4: DO NOT GENERATE TESTS.**
+    - You are strictly forbidden from creating a `tests` directory or any files intended for testing (e.g., files starting with `test_`).
+    - Test generation will be handled by a separate, specialized process later.
+
     {JSON_OUTPUT_RULE}
 
     **EXAMPLE OUTPUT:**
