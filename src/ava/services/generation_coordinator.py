@@ -1,55 +1,90 @@
 # src/ava/services/generation_coordinator.py
-import logging
+import asyncio
+import json
 from typing import Dict, Any, Optional
 
-from .scaffolding_service import ScaffoldingService
-from .implementation_service import ImplementationService
-from ..core.event_bus import EventBus
+from src.ava.core.event_bus import EventBus
+from src.ava.prompts import PLANNER_PROMPT, CODER_PROMPT
+from src.ava.services.base_generation_service import BaseGenerationService
+from src.ava.services.response_validator_service import ResponseValidatorService
 
-logger = logging.getLogger(__name__)
 
-
-class GenerationCoordinator:
+class GenerationCoordinator(BaseGenerationService):
     """
-    Orchestrates the new "Blueprint" workflow by coordinating
-    the Scaffolding and Implementation services.
+    Orchestrates the new iterative, file-by-file generation workflow.
+    This is more robust than the previous single-shot blueprint approach.
     """
 
     def __init__(self, service_manager: Any, event_bus: EventBus):
-        self.service_manager = service_manager
-        self.event_bus = event_bus
+        super().__init__(service_manager, event_bus)
+        self.validator = ResponseValidatorService()
 
     async def coordinate_generation(
             self,
             existing_files: Optional[Dict[str, str]],
             user_request: str
     ) -> Optional[Dict[str, str]]:
-        """Executes the generation pipeline."""
-
+        """Executes the new generation pipeline."""
         self.event_bus.emit("build_workflow_started")
 
-        # Instantiate services for this run
-        scaffolding_service = ScaffoldingService(self.service_manager, self.event_bus)
-        implementation_service = ImplementationService(self.service_manager, self.event_bus)
+        # --- PHASE 1: PLANNING ---
+        self.log("info", "--- Phase 1: Architect is planning the file structure... ---")
+        self.event_bus.emit("agent_status_changed", "Architect", "Planning file structure...", "fa5s.drafting-compass")
 
-        # --- PHASE 1: SCAFFOLDING (BLUEPRINTING) ---
-        scaffold_files = await scaffolding_service.execute(user_request)
-        if not scaffold_files:
-            self.log("error", "Scaffolding phase failed. Aborting generation.")
+        planner_prompt = PLANNER_PROMPT.format(user_request=user_request)
+        planner_response = await self._call_llm_agent(planner_prompt, "architect")
+
+        if not planner_response:
+            self.log("error", "Planner agent returned an empty response. Aborting generation.")
             self.event_bus.emit("ai_workflow_finished")
             return None
 
-        # --- PHASE 2: IMPLEMENTATION ---
-        implemented_files = await implementation_service.execute(scaffold_files)
-        if not implemented_files:
-            self.log("error", "Implementation phase failed. Aborting generation.")
+        parsed_json = self.validator.extract_and_parse_json(planner_response)
+        files_to_create = parsed_json.get("files_to_create") if parsed_json else None
+
+        if not isinstance(files_to_create, list) or not files_to_create:
+            self.log("error",
+                     f"Planner agent failed to return a valid list of files. Response: {planner_response[:300]}")
             self.event_bus.emit("ai_workflow_finished")
             return None
 
-        self.log("success", "✅ Blueprint Workflow Finished Successfully.")
+        self.log("success", f"Architect planned {len(files_to_create)} files.")
+        self.event_bus.emit("project_scaffold_generated", {path: "" for path in files_to_create})
+        await asyncio.sleep(0.5)
+
+        # --- PHASE 2: ITERATIVE GENERATION ---
+        self.log("info", "--- Phase 2: Coder is generating files one by one... ---")
+        generated_files: Dict[str, str] = {}
+        file_list_str = "\n".join(f"- {f}" for f in files_to_create)
+
+        for i, target_file in enumerate(files_to_create):
+            self.log("info", f"Coder starting file ({i + 1}/{len(files_to_create)}): {target_file}")
+            self.event_bus.emit("agent_status_changed", "Coder",
+                                f"Writing {target_file} ({i + 1}/{len(files_to_create)})...", "fa5s.code")
+
+            coder_prompt = CODER_PROMPT.format(
+                user_request=user_request,
+                file_list=file_list_str,
+                target_file=target_file
+            )
+
+            file_content = await self._call_llm_agent(coder_prompt, "coder")
+
+            if file_content is None:
+                self.log("error", f"Coder agent failed to generate code for {target_file}. Aborting generation.")
+                self.event_bus.emit("ai_workflow_finished")
+                return None
+
+            # If Coder returns an empty string for a non-__init__.py file, add a placeholder
+            if not file_content.strip() and not target_file.endswith("__init__.py"):
+                file_content = f'# IMPLEMENTATION_TASK: The AI failed to generate content for this file. Please specify its purpose.'
+
+            generated_files[target_file] = file_content
+            self.event_bus.emit("file_content_updated", target_file, file_content)
+
+            self.log("info", f"Waiting for 1.1s to respect API rate limits...")
+            await asyncio.sleep(1.1)
+
+        self.log("success", "✅ Iterative Generation Finished Successfully.")
         self.event_bus.emit("ai_workflow_finished")
-        return implemented_files
-
-    def log(self, level: str, message: str, **kwargs):
-        """Helper to emit log messages for the coordinator itself."""
-        self.event_bus.emit("log_message_received", "GenCoordinator", level, message, **kwargs)
+        return generated_files

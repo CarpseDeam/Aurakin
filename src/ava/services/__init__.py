@@ -10,8 +10,6 @@ from .project_analyzer import ProjectAnalyzer
 from .project_indexer_service import ProjectIndexerService
 from .rag_service import RAGService
 from .response_validator_service import ResponseValidatorService
-from .scaffolding_service import ScaffoldingService
-from .implementation_service import ImplementationService
 
 
 __all__ = [
@@ -26,6 +24,4 @@ __all__ = [
     "ProjectIndexerService",
     "RAGService",
     "ResponseValidatorService",
-    "ScaffoldingService",
-    "ImplementationService",
 ]

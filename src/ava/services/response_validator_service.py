@@ -13,17 +13,72 @@ class ResponseValidatorService:
     def extract_and_parse_json(self, raw_response: str) -> Optional[Union[Dict, List]]:
         """
         Extracts a JSON object or list from a raw string and parses it.
-        This function is robust against conversational text or markdown code fences.
+        This function is robust against conversational text, markdown code fences, and truncation.
         """
         if not raw_response or not isinstance(raw_response, str):
             return None
-        match = re.search(r'(\{.*\}|\[.*\])', raw_response, re.DOTALL)
-        if not match:
-            return None
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None
+
+        # Step 1: Find the content that is most likely to be the JSON payload.
+        fence_match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw_response, re.DOTALL)
+        content_to_parse = fence_match.group(1) if fence_match else raw_response
+
+        # Step 2: Find the start of the first JSON object or array.
+        first_brace = content_to_parse.find('{')
+        first_bracket = content_to_parse.find('[')
+
+        if first_brace == -1 and first_bracket == -1: return None
+
+        if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
+            start_pos = first_brace
+        else:
+            start_pos = first_bracket
+
+        # Step 3: Parse character-by-character to find the end of the first complete object.
+        # This is resilient to truncated streams by correctly balancing nested structures.
+        delimiter_stack = []
+        in_string = False
+        is_escaped = False
+
+        for i in range(start_pos, len(content_to_parse)):
+            char = content_to_parse[i]
+
+            if is_escaped:
+                is_escaped = False
+                continue
+
+            if char == '\\':
+                is_escaped = True
+                continue
+
+            if char == '"':
+                in_string = not in_string
+
+            if in_string:
+                continue
+
+            if char == '{' or char == '[':
+                delimiter_stack.append(char)
+            elif char == '}':
+                if not delimiter_stack or delimiter_stack[-1] != '{':
+                    # Malformed JSON, but we can't recover.
+                    return None
+                delimiter_stack.pop()
+            elif char == ']':
+                if not delimiter_stack or delimiter_stack[-1] != '[':
+                    # Malformed JSON.
+                    return None
+                delimiter_stack.pop()
+
+            if not delimiter_stack:
+                # We have found the end of the top-level object.
+                json_string = content_to_parse[start_pos : i + 1]
+                try:
+                    return json.loads(json_string)
+                except json.JSONDecodeError:
+                    return None
+
+        # If we finish the loop and the stack is not empty, the JSON was truncated.
+        return None
 
     def _clean_scaffold_paths(self, scaffold: Dict[str, str]) -> Dict[str, str]:
         """

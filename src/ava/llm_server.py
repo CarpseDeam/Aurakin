@@ -156,9 +156,13 @@ def _prepare_openai_messages(history: List[Dict[str, Any]], prompt: str, image_b
 async def _stream_openai_compatible(client, model, prompt, temp, image_b64, media_type, history, provider: str):
     messages = _prepare_openai_messages(history, prompt, image_b64, media_type)
 
+    # --- THIS IS THE FIX ---
+    # The previous max_tokens was too low, causing truncation. 8192 is a much safer, higher limit
+    # that models like GPT-4o and Gemini 1.5 Pro can easily handle for output.
     stream = await client.chat.completions.create(
-        model=model, messages=messages, stream=True, temperature=temp, max_tokens=4096
+        model=model, messages=messages, stream=True, temperature=temp, max_tokens=8192
     )
+    # --- END OF FIX ---
     async for chunk in stream:
         if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
             yield chunk.choices[0].delta.content
@@ -172,9 +176,14 @@ async def _stream_google(client, model, prompt, temp, image_b64, media_type, his
     if prompt: content_parts.append(prompt)
     if image_b64: content_parts.append(Image.open(io.BytesIO(base64.b64decode(image_b64))))
 
+    # --- THIS IS THE FIX ---
+    # Explicitly set a high max_output_tokens limit.
     response_stream = await chat_session.send_message_async(content_parts, stream=True,
                                                             generation_config=genai.types.GenerationConfig(
-                                                                temperature=temp))
+                                                                temperature=temp,
+                                                                max_output_tokens=8192
+                                                            ))
+    # --- END OF FIX ---
     async for chunk in response_stream:
         if chunk.text: yield chunk.text
 
@@ -205,9 +214,11 @@ async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, 
         if anthropic_content:
             anthropic_messages.append({"role": msg['role'], "content": anthropic_content})
 
-
-    async with client.messages.stream(max_tokens=4096, model=model, messages=anthropic_messages,
+    # --- THIS IS THE FIX ---
+    # Increased max_tokens for Anthropic models as well.
+    async with client.messages.stream(max_tokens=8192, model=model, messages=anthropic_messages,
                                       temperature=temp) as stream:
+    # --- END OF FIX ---
         async for event in stream:
             if event.type == "content_block_delta" and event.delta.type == "text_delta":
                 yield event.delta.text

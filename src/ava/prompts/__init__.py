@@ -1,9 +1,9 @@
 # src/ava/prompts/__init__.py
 
-# Prompts for the new "Blueprint" workflow
-from .scaffolding import ARCHITECT_BLUEPRINT_PROMPT, CODER_IMPLEMENT_MARKER_PROMPT
+# Prompts for the new "Iterative" workflow
+from .iterative import PLANNER_PROMPT, CODER_PROMPT
 
 __all__ = [
-    'ARCHITECT_BLUEPRINT_PROMPT',
-    'CODER_IMPLEMENT_MARKER_PROMPT',
+    'PLANNER_PROMPT',
+    'CODER_PROMPT',
 ]

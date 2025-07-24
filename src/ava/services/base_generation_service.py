@@ -30,6 +30,14 @@ class BaseGenerationService:
             async for chunk in self.llm_client.stream_chat(provider, model, prompt, role):
                 response_content += chunk
 
+            # --- THIS IS THE FIX ---
+            # Check for our specific error token from the LLM client.
+            if response_content.startswith("LLM_API_ERROR:"):
+                # Log the specific error and return None to signal failure.
+                self.log("error", f"API Error from LLM for role '{role}': {response_content}")
+                return None
+            # --- END OF FIX ---
+
             # Coder role often wraps code in markdown blocks
             if role == "coder":
                 match = re.search(r"```(?:[a-zA-Z0-9_]*)?\n(.*?)\n```", response_content, re.DOTALL)
