@@ -155,48 +155,58 @@ def _prepare_openai_messages(history: List[Dict[str, Any]], prompt: str, image_b
 
 async def _stream_openai_compatible(client, model, prompt, temp, image_b64, media_type, history, provider: str):
     messages = _prepare_openai_messages(history, prompt, image_b64, media_type)
-
-    # --- THIS IS THE FIX ---
-    # The previous max_tokens was too low, causing truncation. 8192 is a much safer, higher limit
-    # that models like GPT-4o and Gemini 1.5 Pro can easily handle for output.
     stream = await client.chat.completions.create(
         model=model, messages=messages, stream=True, temperature=temp, max_tokens=8192
     )
-    # --- END OF FIX ---
+
+    # --- THIS IS THE FIX ---
+    # We now track if any content has been sent.
+    content_sent = False
     async for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta and chunk.choices[0].delta.content:
-            yield chunk.choices[0].delta.content
+        if chunk.choices and chunk.choices[0].delta and (content := chunk.choices[0].delta.content):
+            content_sent = True
+            # Yield character by character for a smooth typewriter effect.
+            for char in content:
+                yield char
+
+    # If the stream finishes and we never sent anything, yield a single space.
+    # This prevents the `StopAsyncIteration` error for empty responses.
+    if not content_sent:
+        yield " "
+    # --- END OF FIX ---
 
 
 async def _stream_google(client, model, prompt, temp, image_b64, media_type, history):
     model_instance = genai.GenerativeModel(f'models/{model}')
-    # Note: Google's history format is different. This would need a specific prep function if used.
     chat_session = model_instance.start_chat(history=[])
     content_parts = []
     if prompt: content_parts.append(prompt)
     if image_b64: content_parts.append(Image.open(io.BytesIO(base64.b64decode(image_b64))))
 
-    # --- THIS IS THE FIX ---
-    # Explicitly set a high max_output_tokens limit.
     response_stream = await chat_session.send_message_async(content_parts, stream=True,
                                                             generation_config=genai.types.GenerationConfig(
                                                                 temperature=temp,
                                                                 max_output_tokens=8192
                                                             ))
-    # --- END OF FIX ---
+
+    # --- THIS IS THE FIX ---
+    content_sent = False
     async for chunk in response_stream:
-        if chunk.text: yield chunk.text
+        if chunk.text:
+            content_sent = True
+            for char in chunk.text:
+                yield char
+    if not content_sent:
+        yield " "
+    # --- END OF FIX ---
 
 
 async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, history):
     openai_messages = _prepare_openai_messages(history, prompt, image_b64, media_type)
     anthropic_messages = []
     for msg in openai_messages:
-        # Anthropic's 'assistant' role also expects a list of content blocks
         anthropic_content = []
-
         if isinstance(msg.get('content'), list):
-            # Handle user messages with multiple parts (text, image)
             for part in msg['content']:
                 if part['type'] == 'text':
                     anthropic_content.append(part)
@@ -208,20 +218,23 @@ async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, 
                         "source": {"type": "base64", "media_type": m_type, "data": b64_data}
                     })
         elif isinstance(msg.get('content'), str):
-             # Handle assistant messages with simple string content
-             anthropic_content.append({"type": "text", "text": msg['content']})
+            anthropic_content.append({"type": "text", "text": msg['content']})
 
         if anthropic_content:
             anthropic_messages.append({"role": msg['role'], "content": anthropic_content})
 
     # --- THIS IS THE FIX ---
-    # Increased max_tokens for Anthropic models as well.
+    content_sent = False
     async with client.messages.stream(max_tokens=8192, model=model, messages=anthropic_messages,
                                       temperature=temp) as stream:
-    # --- END OF FIX ---
         async for event in stream:
             if event.type == "content_block_delta" and event.delta.type == "text_delta":
-                yield event.delta.text
+                content_sent = True
+                for char in event.delta.text:
+                    yield char
+    if not content_sent:
+        yield " "
+    # --- END OF FIX ---
 
 
 async def _stream_ollama(client, model, prompt, temp, image_b64, media_type, history):
@@ -238,13 +251,20 @@ async def _stream_ollama(client, model, prompt, temp, image_b64, media_type, his
     ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/chat"
     payload = {"model": model, "messages": messages, "stream": True, "options": {"temperature": temp}}
 
+    # --- THIS IS THE FIX ---
+    content_sent = False
     async with aiohttp.ClientSession() as session:
         async with session.post(ollama_url, json=payload) as resp:
             async for line in resp.content:
                 if line:
                     chunk_json = json.loads(line.decode('utf-8'))
                     if content := chunk_json.get("message", {}).get("content"):
-                        yield content
+                        content_sent = True
+                        for char in content:
+                            yield char
+    if not content_sent:
+        yield " "
+    # --- END OF FIX ---
 
 
 # --- API Endpoints ---
@@ -267,7 +287,6 @@ async def stream_chat_endpoint(request: StreamChatRequest):
 
     async def generator():
         try:
-            # Pass the provider to the stream function for specific handling
             if request.provider in ["openai", "deepseek"]:
                 async for chunk in stream_func(client, request.model, request.prompt, request.temperature,
                                                request.image_b64, request.media_type, request.history,
@@ -300,7 +319,6 @@ async def get_available_models_endpoint():
     if "anthropic" in app_state["clients"]:
         models["anthropic/claude-opus-4-20250514"] = "Anthropic: Claude Opus 4"
         models["anthropic/claude-sonnet-4-20250514"] = "Anthropic: Claude Sonnet 4"
-
 
     ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/tags"
     try:
