@@ -64,25 +64,12 @@ class WorkflowManager:
             self.event_bus.emit("streaming_end")
 
     async def _run_build_workflow(self, user_request: str, existing_files: Optional[Dict[str, str]]):
-        """Orchestrates the 'Plan -> Code -> Architect (Review)' assembly line."""
-        architect = self.service_manager.get_architect_service()
+        """Orchestrates the 'Blueprint -> Implement -> Review' assembly line."""
         project_manager = self.service_manager.get_project_manager()
         coordinator = self.service_manager.get_generation_coordinator()
 
-        # 1. Planning Phase
-        self.event_bus.emit("agent_status_changed", "Architect", "Drafting plan...", "fa5s.drafting-compass")
-        code_context = json.dumps(existing_files or {}, indent=2)
-
-        plan = await architect.generate_plan(user_request, code_context)
-        if not plan or not isinstance(plan.get("tasks"), list):
-            self.log("error", "Build workflow failed: Could not create a valid plan.")
-            self.event_bus.emit("ai_response_ready", "Sorry, I couldn't create a plan for that request.")
-            return
-
-        self.event_bus.emit("project_plan_generated", plan)
-
-        # 2. Execution Phase
-        final_code = await coordinator.coordinate_generation(plan, existing_files, user_request)
+        # The 'plan' step is removed. We go directly to the coordinator.
+        final_code = await coordinator.coordinate_generation(existing_files, user_request)
         if not final_code:
             self.log("error", "Build workflow failed during code generation.")
             self.event_bus.emit("ai_response_ready", "Sorry, the code generation process failed.")
