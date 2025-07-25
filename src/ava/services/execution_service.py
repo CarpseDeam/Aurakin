@@ -1,5 +1,4 @@
 # src/ava/services/execution_service.py
-# NEW FILE
 import asyncio
 import sys
 from typing import TYPE_CHECKING, Optional
@@ -56,16 +55,40 @@ class ExecutionService:
             return
 
         venv_python = self.project_manager.venv_python_path
+
+        # --- NEW: Smart venv creation logic ---
         if not venv_python or not venv_python.exists():
-            error_msg = f"Could not find Python executable in .venv for project '{self.project_manager.active_project_name}'."
+            self.event_bus.emit("terminal_output_received", "--- No virtual environment found. Attempting to create one now... ---")
+            self.log("info", "No .venv found. Triggering automatic creation.")
+
+            if self.project_manager.venv_manager:
+                success = self.project_manager.venv_manager.create_venv()
+                if success:
+                    self.event_bus.emit("terminal_output_received", "--- Virtual environment created successfully. ---")
+                    # Now that it's created, get the path again.
+                    venv_python = self.project_manager.venv_python_path
+                else:
+                    error_msg = f"Failed to create virtual environment for project '{self.project_manager.active_project_name}'."
+                    self.log("error", error_msg)
+                    self.event_bus.emit("terminal_output_received", f"--- {error_msg} ---")
+                    self.event_bus.emit("command_execution_finished", -1)
+                    return
+            else:
+                error_msg = "VenvManager is not available on the ProjectManager."
+                self.log("error", error_msg)
+                self.event_bus.emit("terminal_output_received", f"--- {error_msg} ---")
+                self.event_bus.emit("command_execution_finished", -1)
+                return
+        # --- End of new logic ---
+
+
+        if not venv_python or not venv_python.exists():
+            error_msg = f"Python executable still not found in .venv for project '{self.project_manager.active_project_name}' after creation attempt."
             self.log("error", error_msg)
             self.event_bus.emit("terminal_output_received", f"--- {error_msg} ---")
-            self.event_bus.emit("terminal_output_received", "--- Try installing dependencies first. ---")
             self.event_bus.emit("command_execution_finished", -1)
             return
 
-        # Prepend the venv python/pip executable to the command. This is more robust
-        # than trying to activate a venv via shell commands.
         parts = command.split()
         executable = parts[0].lower()
 
@@ -75,8 +98,6 @@ class ExecutionService:
             pip_exe = venv_python.parent / "pip.exe" if sys.platform == "win32" else venv_python.parent / "pip"
             full_command = f'"{pip_exe}" {" ".join(parts[1:])}'
         else:
-            # For other commands like 'pytest', assume they are modules to be run with `python -m`.
-            # This is a safe default for Python-centric projects.
             full_command = f'"{venv_python}" -m {command}'
 
         self.event_bus.emit("terminal_output_received", f"> {command}\n")
@@ -85,16 +106,14 @@ class ExecutionService:
             self.current_process = await asyncio.create_subprocess_shell(
                 full_command,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,  # Redirect stderr to stdout for unified output
+                stderr=asyncio.subprocess.STDOUT,
                 cwd=self.project_manager.active_project_path
             )
 
-            # Stream the output line by line
             while True:
                 line_bytes = await self.current_process.stdout.readline()
                 if not line_bytes:
                     break
-                # Decode using the system's default encoding, replacing errors.
                 line = line_bytes.decode(sys.stdout.encoding, errors='replace').rstrip()
                 self.event_bus.emit("terminal_output_received", line)
 

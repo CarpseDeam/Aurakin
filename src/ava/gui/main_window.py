@@ -10,7 +10,7 @@ from src.ava.gui.enhanced_sidebar import EnhancedSidebar
 from src.ava.gui.status_bar import StatusBar
 
 
-class MainWindow(QMainWindow):  # <-- PROMOTED from QWidget to QMainWindow
+class MainWindow(QMainWindow):
     """
     Main window of the application, holding the sidebar and chat interface.
     """
@@ -21,41 +21,39 @@ class MainWindow(QMainWindow):  # <-- PROMOTED from QWidget to QMainWindow
         self.project_root = project_root
         self._closing = False
 
-        # --- Window Properties ---
         self.setWindowTitle("Aurakin")
         self.resize(1400, 900)
         self.setMinimumSize(800, 600)
 
-        # --- Central Widget and Layout ---
-        # QMainWindow has a special way of setting its main content area
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # --- Components ---
         self.sidebar = EnhancedSidebar(event_bus)
         self.chat_interface = ChatInterface(event_bus, self.project_root)
 
-        # --- Add Components to Layout ---
         main_layout.addWidget(self.sidebar, 1)
         main_layout.addWidget(self.chat_interface, 3)
 
-        # --- Status Bar Setup (NEW) ---
-        # Now that this is a QMainWindow, we can set a status bar
         self.status_bar = StatusBar(self.event_bus)
         self.setStatusBar(self.status_bar)
 
     def closeEvent(self, event: QCloseEvent):
         """
-        Handles the window close event by properly quitting the application,
-        which allows the main async loop to perform graceful cleanup.
+        Handles the window close event. Instead of quitting directly,
+        it emits a shutdown request and ignores the event, allowing the
+        Application class to perform a graceful async shutdown.
         """
         if not self._closing:
             self._closing = True
-            print("[MainWindow] Close event triggered. Asking application to quit gracefully.")
-            # This is the correct, standard way to initiate a shutdown.
-            # It will trigger the 'aboutToQuit' signal in the main event loop.
-            QApplication.instance().quit()
-        event.accept()
+            print("[MainWindow] Close event triggered. Emitting 'application_shutdown_requested'.")
+            # Emit the signal for the Application to start its async shutdown.
+            self.event_bus.emit("application_shutdown_requested")
+            # Tell Qt to IGNORE this close event. The application will be closed
+            # programmatically after the async cleanup is finished.
+            event.ignore()
+        else:
+            # If shutdown is already in progress, just accept the event.
+            event.accept()

@@ -4,6 +4,9 @@ import asyncio
 import sys
 from pathlib import Path
 
+# --- NEW: Import QApplication for programmatic shutdown ---
+from PySide6.QtWidgets import QApplication
+
 from src.ava.core.event_bus import EventBus
 from src.ava.core.managers import WindowManager, ServiceManager, TaskManager, WorkflowManager, EventCoordinator
 from src.ava.core.plugins.plugin_manager import PluginManager
@@ -40,10 +43,8 @@ class Application:
     def _connect_events(self):
         """Set up event connections between components."""
         self.event_bus.subscribe("open_code_viewer_requested", self.window_manager.show_code_viewer)
-        # --- FIX: Removed the conflicting event subscription ---
-        # self.event_bus.subscribe("project_root_selected", self.project_manager.load_project)
-        # --- FIX: Removed shutdown event subscription as it's now handled by the main loop ---
-        # self.event_bus.subscribe("application_shutdown", lambda: asyncio.create_task(self.shutdown()))
+        # --- NEW: Subscribe to the shutdown request from the main window ---
+        self.event_bus.subscribe("application_shutdown_requested", lambda: asyncio.create_task(self.shutdown()))
 
     async def initialize_async(self):
         """Perform async initialization of components."""
@@ -103,7 +104,7 @@ class Application:
                 status = "ok"
                 for plugin in all_plugins_info:
                     if plugin['name'] in enabled_plugins and plugin.get('state') != 'started':
-                        status = "error";
+                        status = "error"
                         break
             main_window = self.window_manager.get_main_window()
             if main_window and hasattr(main_window, 'sidebar'):
@@ -116,11 +117,17 @@ class Application:
 
     async def shutdown(self):
         print("[Application] Shutting down application components...")
-        if self.task_manager:
-            await self.task_manager.cancel_all_tasks()
-        if self.service_manager:
-            await self.service_manager.shutdown()
-        print("[Application] All components shut down.")
+        try:
+            if self.task_manager:
+                await self.task_manager.cancel_all_tasks()
+            if self.service_manager:
+                await self.service_manager.shutdown()
+            print("[Application] All components shut down.")
+        finally:
+            # --- NEW: This is the final command that will close the application ---
+            # It is only called AFTER all the async cleanup above is complete.
+            print("[Application] All cleanup complete. Exiting now.")
+            QApplication.instance().quit()
 
     def is_fully_initialized(self) -> bool:
         return (self._initialization_complete and
