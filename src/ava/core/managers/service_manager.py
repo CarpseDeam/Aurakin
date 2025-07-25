@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING, Optional
 import traceback  # For detailed error logging
 import asyncio
 
+# --- NEW: Import the process manager module ---
+from src.ava.core import process_manager
+
 from src.ava.core.event_bus import EventBus
 from src.ava.core.llm_client import LLMClient
 from src.ava.core.project_manager import ProjectManager
@@ -48,9 +51,7 @@ class ServiceManager:
         self.code_extractor_service: CodeExtractorService = None
         self._service_injection_enabled = True
 
-        self.rag_server_process: Optional[subprocess.Popen] = None
-        self.llm_server_process: Optional[subprocess.Popen] = None
-        self.lsp_server_process: Optional[subprocess.Popen] = None
+        # --- REMOVED: Process handles are now managed by the central ProcessManager ---
 
         self.log_to_event_bus("info", "[ServiceManager] Initialized")
 
@@ -103,7 +104,7 @@ class ServiceManager:
         self.log_to_event_bus("info", "[ServiceManager] Services initialized")
 
     def launch_background_servers(self):
-        """Launches the RAG and LLM servers as separate processes."""
+        """Launches the RAG and LLM servers as separate processes and registers them for cleanup."""
         python_executable_to_use: str
         cwd_for_servers: Path
         log_dir_for_servers: Path
@@ -175,74 +176,63 @@ class ServiceManager:
             source_repo_root = self.project_root.parent
             env["PYTHONPATH"] = str(source_repo_root)
 
-        if self.llm_server_process is None or self.llm_server_process.poll() is not None:
-            self.log_to_event_bus("info", "Attempting to launch LLM server...")
-            try:
-                with open(llm_subprocess_log_file, "w", encoding="utf-8") as llm_log_handle:
-                    self.llm_server_process = subprocess.Popen(
-                        [python_executable_to_use, str(llm_script_path)], cwd=str(cwd_for_servers),
-                        stdout=llm_log_handle, stderr=subprocess.STDOUT,
-                        startupinfo=startupinfo,
-                        env=env
-                    )
-                pid = self.llm_server_process.pid if self.llm_server_process else 'N/A'
-                self.log_to_event_bus("info", f"LLM Server process started with PID: {pid}")
-            except Exception as e:
-                self.log_to_event_bus("error", f"Failed to launch LLM server: {e}\n{traceback.format_exc()}")
+        # --- MODIFIED: Launch and register LLM server ---
+        self.log_to_event_bus("info", "Attempting to launch LLM server...")
+        try:
+            with open(llm_subprocess_log_file, "w", encoding="utf-8") as llm_log_handle:
+                llm_proc = subprocess.Popen(
+                    [python_executable_to_use, str(llm_script_path)], cwd=str(cwd_for_servers),
+                    stdout=llm_log_handle, stderr=subprocess.STDOUT,
+                    startupinfo=startupinfo,
+                    env=env
+                )
+            process_manager.register(llm_proc, "LLM Server")
+            pid = llm_proc.pid if llm_proc else 'N/A'
+            self.log_to_event_bus("info", f"LLM Server process started with PID: {pid}")
+        except Exception as e:
+            self.log_to_event_bus("error", f"Failed to launch LLM server: {e}\n{traceback.format_exc()}")
 
-        if self.rag_server_process is None or self.rag_server_process.poll() is not None:
-            self.log_to_event_bus("info", "Attempting to launch RAG server...")
-            try:
-                with open(rag_subprocess_log_file, "w", encoding="utf-8") as rag_log_handle:
-                    self.rag_server_process = subprocess.Popen(
-                        [python_executable_to_use, str(rag_script_path)], cwd=str(cwd_for_servers),
-                        stdout=rag_log_handle, stderr=subprocess.STDOUT,
-                        startupinfo=startupinfo,
-                        env=env
-                    )
-                pid = self.rag_server_process.pid if self.rag_server_process else 'N/A'
-                self.log_to_event_bus("info", f"RAG Server process started with PID: {pid}")
-            except Exception as e:
-                self.log_to_event_bus("error", f"Failed to launch RAG server: {e}\n{traceback.format_exc()}")
+        # --- MODIFIED: Launch and register RAG server ---
+        self.log_to_event_bus("info", "Attempting to launch RAG server...")
+        try:
+            with open(rag_subprocess_log_file, "w", encoding="utf-8") as rag_log_handle:
+                rag_proc = subprocess.Popen(
+                    [python_executable_to_use, str(rag_script_path)], cwd=str(cwd_for_servers),
+                    stdout=rag_log_handle, stderr=subprocess.STDOUT,
+                    startupinfo=startupinfo,
+                    env=env
+                )
+            process_manager.register(rag_proc, "RAG Server")
+            pid = rag_proc.pid if rag_proc else 'N/A'
+            self.log_to_event_bus("info", f"RAG Server process started with PID: {pid}")
+        except Exception as e:
+            self.log_to_event_bus("error", f"Failed to launch RAG server: {e}\n{traceback.format_exc()}")
 
-        if self.lsp_server_process is None or self.lsp_server_process.poll() is not None:
-            self.log_to_event_bus("info", "Attempting to launch Python LSP server...")
-            lsp_command = [python_executable_to_use, "-m", "pylsp", "--tcp", "--port", "8003"]
-            try:
-                with open(lsp_subprocess_log_file, "w", encoding="utf-8") as lsp_log_handle:
-                    self.lsp_server_process = subprocess.Popen(
-                        lsp_command, cwd=str(cwd_for_servers),
-                        stdout=lsp_log_handle, stderr=subprocess.STDOUT,
-                        startupinfo=startupinfo,
-                        env=env
-                    )
-                pid = self.lsp_server_process.pid if self.lsp_server_process else 'N/A'
-                self.log_to_event_bus("info", f"LSP Server process started with PID: {pid}")
-                asyncio.create_task(self.lsp_client_service.connect())
-            except FileNotFoundError:
-                self.log_to_event_bus("error",
-                                      "Failed to launch LSP server: `pylsp` command not found. Please ensure `python-lsp-server` is installed.")
-            except Exception as e:
-                self.log_to_event_bus("error", f"Failed to launch LSP server: {e}\n{traceback.format_exc()}")
+        # --- MODIFIED: Launch and register LSP server ---
+        self.log_to_event_bus("info", "Attempting to launch Python LSP server...")
+        lsp_command = [python_executable_to_use, "-m", "pylsp", "--tcp", "--port", "8003"]
+        try:
+            with open(lsp_subprocess_log_file, "w", encoding="utf-8") as lsp_log_handle:
+                lsp_proc = subprocess.Popen(
+                    lsp_command, cwd=str(cwd_for_servers),
+                    stdout=lsp_log_handle, stderr=subprocess.STDOUT,
+                    startupinfo=startupinfo,
+                    env=env
+                )
+            process_manager.register(lsp_proc, "Python LSP Server")
+            pid = lsp_proc.pid if lsp_proc else 'N/A'
+            self.log_to_event_bus("info", f"LSP Server process started with PID: {pid}")
+            asyncio.create_task(self.lsp_client_service.connect())
+        except FileNotFoundError:
+            self.log_to_event_bus("error",
+                                  "Failed to launch LSP server: `pylsp` command not found. Please ensure `python-lsp-server` is installed.")
+        except Exception as e:
+            self.log_to_event_bus("error", f"Failed to launch LSP server: {e}\n{traceback.format_exc()}")
 
     def terminate_background_servers(self):
-        """Terminates background servers forcefully and waits for them."""
-        self.log_to_event_bus("info", "[ServiceManager] Terminating background servers...")
-        servers = {"LLM": self.llm_server_process, "RAG": self.rag_server_process, "LSP": self.lsp_server_process}
-        for name, process in servers.items():
-            if process and process.poll() is None:
-                self.log_to_event_bus("info", f"[ServiceManager] Killing {name} server (PID: {process.pid})...")
-                try:
-                    process.kill()
-                    # Wait for a short moment to allow the OS to clean up the process
-                    process.wait(timeout=2)
-                    self.log_to_event_bus("info", f"[ServiceManager] {name} server process terminated.")
-                except subprocess.TimeoutExpired:
-                    self.log_to_event_bus("warning", f"[ServiceManager] {name} server did not exit after kill signal.")
-                except Exception as e:
-                    self.log_to_event_bus("error", f"[ServiceManager] Error killing {name} server: {e}")
-        self.llm_server_process = self.rag_server_process = self.lsp_server_process = None
-        self.log_to_event_bus("info", "[ServiceManager] Background server process handles set to None.")
+        """Terminates background servers by calling the central ProcessManager."""
+        self.log_to_event_bus("info", "[ServiceManager] Handing off to ProcessManager to terminate background servers...")
+        process_manager.terminate_all()
 
     async def shutdown(self):
         self.log_to_event_bus("info", "[ServiceManager] Shutting down services...")

@@ -250,13 +250,14 @@ class ProjectVisualizerWindow(QMainWindow):
         self.log("info", "Relaying out and animating nodes...")
         new_positions = self._calculate_node_positions()
 
-        # Disconnect any previous finished signals to prevent multiple triggers
-        try:
-            self._animation_group.finished.disconnect()
-        except (RuntimeError, TypeError):
-            pass  # It's okay if it wasn't connected
+        # --- THIS IS THE FIX ---
+        # Stop any animation that might be in progress.
+        self._animation_group.stop()
 
+        # Re-create the animation group. This is the cleanest way to ensure
+        # old connections are discarded and avoids the warning.
         self._animation_group = QParallelAnimationGroup()
+        # --- END OF FIX ---
 
         for node_key, node in self.nodes.items():
             if node.isVisible() and node_key in new_positions:
@@ -268,7 +269,7 @@ class ProjectVisualizerWindow(QMainWindow):
                     anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
                     self._animation_group.addAnimation(anim)
 
-        # --- FIX: Use a single, ordered handler for post-animation tasks ---
+        # Use a single, ordered handler for post-animation tasks
         self._animation_group.finished.connect(lambda: self._on_layout_animation_finished(fit_view))
         self._animation_group.start()
 
