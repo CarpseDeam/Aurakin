@@ -27,7 +27,6 @@ class ExecutionService:
     def log(self, level: str, message: str, **kwargs):
         """Helper to emit log messages and user-facing terminal output for errors."""
         if level == "error":
-            # For critical errors, push a message to the live terminal view.
             self.event_bus.emit("terminal_output_received", f"--- ENGINE ERROR: {message} ---")
         self.event_bus.emit("log_message_received", self.__class__.__name__, level, message, **kwargs)
 
@@ -56,16 +55,15 @@ class ExecutionService:
 
         venv_python = self.project_manager.venv_python_path
 
-        # --- NEW: Smart venv creation logic ---
         if not venv_python or not venv_python.exists():
             self.event_bus.emit("terminal_output_received", "--- No virtual environment found. Attempting to create one now... ---")
             self.log("info", "No .venv found. Triggering automatic creation.")
 
             if self.project_manager.venv_manager:
-                success = self.project_manager.venv_manager.create_venv()
+                success = await asyncio.to_thread(self.project_manager.venv_manager.create_venv)
+
                 if success:
                     self.event_bus.emit("terminal_output_received", "--- Virtual environment created successfully. ---")
-                    # Now that it's created, get the path again.
                     venv_python = self.project_manager.venv_python_path
                 else:
                     error_msg = f"Failed to create virtual environment for project '{self.project_manager.active_project_name}'."
@@ -79,8 +77,6 @@ class ExecutionService:
                 self.event_bus.emit("terminal_output_received", f"--- {error_msg} ---")
                 self.event_bus.emit("command_execution_finished", -1)
                 return
-        # --- End of new logic ---
-
 
         if not venv_python or not venv_python.exists():
             error_msg = f"Python executable still not found in .venv for project '{self.project_manager.active_project_name}' after creation attempt."
@@ -89,16 +85,17 @@ class ExecutionService:
             self.event_bus.emit("command_execution_finished", -1)
             return
 
-        parts = command.split()
-        executable = parts[0].lower()
-
-        if executable == "python":
-            full_command = f'"{venv_python}" {" ".join(parts[1:])}'
-        elif executable == "pip":
-            pip_exe = venv_python.parent / "pip.exe" if sys.platform == "win32" else venv_python.parent / "pip"
-            full_command = f'"{pip_exe}" {" ".join(parts[1:])}'
+        # --- NEW: Simplified and more robust command construction ---
+        full_command: str
+        if command.lower().startswith("python "):
+            # Handle direct script execution like "python main.py"
+            script_part = command[len("python "):]
+            full_command = f'"{venv_python}" {script_part}'
         else:
+            # For everything else, use the robust `python -m <module>` pattern.
+            # This correctly handles `pip`, `pytest`, etc.
             full_command = f'"{venv_python}" -m {command}'
+        # --- END of new logic ---
 
         self.event_bus.emit("terminal_output_received", f"> {command}\n")
 
