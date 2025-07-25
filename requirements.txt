@@ -1,1 +1,23 @@
+# Core Application & UI
+PySide6
+qasync
+qtawesome
+
+# LLM & RAG Servers
+fastapi
+uvicorn
+python-dotenv
+chromadb
+sentence-transformers
+
+# LLM Provider SDKs
+openai
+google-generativeai
+anthropic
+Pillow
+
+# Utilities & Tooling
+GitPython
+Pygments
+aiohttp
 unidiff
