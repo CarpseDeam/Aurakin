@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from src.ava.core.event_bus import EventBus
 from src.ava.core.project_manager import ProjectManager
 from src.ava.gui.components import Colors
-from src.ava.gui.node_viewer import ProjectNode
+from src.ava.gui.node_viewer.project_node import ProjectNode
 from src.ava.gui.node_viewer.animated_connection import AnimatedConnection
 from src.ava.services.code_structure_service import CodeStructureService
 
@@ -137,7 +137,6 @@ class ProjectVisualizerWindow(QMainWindow):
                 node.is_expanded = False
 
         self._set_children_visibility(root_node, root_node.is_expanded)
-
         self._relayout_and_animate(fit_view=True)
 
     def _build_full_code_tree(self, project_files: Dict[str, str]) -> Dict:
@@ -205,7 +204,6 @@ class ProjectVisualizerWindow(QMainWindow):
     def _handle_node_toggle(self, node: ProjectNode):
         node.is_expanded = not node.is_expanded
         self.log("info", f"Node '{node.name}' {'expanded' if node.is_expanded else 'collapsed'}.")
-
         self._set_children_visibility(node, node.is_expanded)
         self._relayout_and_animate()
 
@@ -252,6 +250,12 @@ class ProjectVisualizerWindow(QMainWindow):
         self.log("info", "Relaying out and animating nodes...")
         new_positions = self._calculate_node_positions()
 
+        # Disconnect any previous finished signals to prevent multiple triggers
+        try:
+            self._animation_group.finished.disconnect()
+        except (RuntimeError, TypeError):
+            pass  # It's okay if it wasn't connected
+
         self._animation_group = QParallelAnimationGroup()
 
         for node_key, node in self.nodes.items():
@@ -264,22 +268,20 @@ class ProjectVisualizerWindow(QMainWindow):
                     anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
                     self._animation_group.addAnimation(anim)
 
-        # --- FIX: Guarantee a final update of connection lines after animation ---
-        self._animation_group.finished.connect(self._update_all_connections)
-
-        if fit_view:
-            self._animation_group.finished.connect(self._fit_view_with_padding)
-
+        # --- FIX: Use a single, ordered handler for post-animation tasks ---
+        self._animation_group.finished.connect(lambda: self._on_layout_animation_finished(fit_view))
         self._animation_group.start()
 
-    def _update_all_connections(self):
-        """Forces a redraw of all visible connection paths. Crucial after animation."""
-        if self.sender() == self._animation_group:
-            try:
-                self._animation_group.finished.disconnect(self._update_all_connections)
-            except (RuntimeError, TypeError):  # Can fail if already disconnected
-                pass
+    def _on_layout_animation_finished(self, fit_view: bool):
+        """A single handler to ensure operations happen in the correct order after animation."""
+        # First, update all connections to their new final positions.
+        self._update_all_connections()
+        # THEN, if requested, fit the view to the now-correct bounding box.
+        if fit_view:
+            self._fit_view_with_padding()
 
+    def _update_all_connections(self):
+        """Forces a redraw of all visible connection paths."""
         for conn in self.connections:
             if conn.isVisible():
                 conn.update_path()
@@ -291,12 +293,7 @@ class ProjectVisualizerWindow(QMainWindow):
         self._active_connection = None
 
     def _fit_view_with_padding(self) -> None:
-        if self.sender() == self._animation_group:
-            try:
-                self._animation_group.finished.disconnect(self._fit_view_with_padding)
-            except (RuntimeError, TypeError):
-                pass
-
+        """Adjusts the view to show all items with a nice margin."""
         rect = self.scene.itemsBoundingRect()
         if not rect.isValid(): return
         padding = 50
