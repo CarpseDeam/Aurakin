@@ -2,12 +2,14 @@
   "role_assignments": {
     "architect": "google/gemini-2.5-pro-preview-06-05",
     "coder": "google/gemini-2.5-flash",
+    "tester": "google/gemini-2.5-flash",
     "chat": "deepseek/deepseek-chat",
     "reviewer": "google/gemini-2.5-pro-preview-06-05"
   },
   "role_temperatures": {
     "architect": 0.25,
     "coder": 0.1,
+    "tester": 0.15,
     "chat": 0.7,
     "reviewer": 0.2
   }

@@ -43,7 +43,10 @@ class CodeStructureService:
                             if method_code:
                                 class_info["methods"][method_name] = method_code
                     structure["classes"][class_name] = class_info
-        except SyntaxError:
-            # If the code is not valid Python, we can't parse it. Return empty.
+        except SyntaxError as e:
+            # --- THIS IS THE FIX ---
+            # Instead of failing silently, print the error so we know which file is broken.
+            print(f"[CodeStructureService] ERROR: Failed to parse a file due to SyntaxError: {e}")
+            # --- END OF FIX ---
             return {"classes": {}, "functions": {}}
         return structure

@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from typing import Optional, Dict, TYPE_CHECKING, Any, List
+from pathlib import Path
 
 from src.ava.core.app_state import AppState
 from src.ava.core.event_bus import EventBus
@@ -36,6 +37,7 @@ class WorkflowManager:
         self.task_manager = task_manager
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
         self.event_bus.subscribe("workflow_finalized", self._on_workflow_finalized)
+        self.event_bus.subscribe("unit_test_generation_requested", self.handle_test_generation_request)
 
     def _on_workflow_finalized(self, final_code: Dict[str, str]):
         self._last_generated_code = final_code
@@ -111,6 +113,51 @@ class WorkflowManager:
 
         if workflow_coroutine:
             self.task_manager.start_ai_workflow_task(workflow_coroutine)
+
+    async def handle_test_generation_request(self, function_name: str, function_code: str, source_file_path_str: str):
+        """Handles the request from the UI to generate a unit test for a function."""
+        self.log("info", f"Test generation request received for '{function_name}'.")
+        test_generation_service = self.service_manager.get_test_generation_service()
+        project_manager = self.service_manager.get_project_manager()
+
+        if not test_generation_service or not project_manager or not project_manager.active_project_path:
+            self.log("error", "Cannot generate test: Services or active project not available.")
+            return
+
+        source_file_path = Path(source_file_path_str)
+        relative_source_path = source_file_path.relative_to(project_manager.active_project_path).as_posix()
+
+        # Generate the test content
+        test_content = await test_generation_service.generate_test_for_function(
+            function_name, function_code, relative_source_path
+        )
+
+        if not test_content:
+            self.log("error", f"Test generation failed for function '{function_name}'.")
+            self.event_bus.emit("ai_workflow_finished") # Reset status bar
+            return
+
+        # Determine the path for the new test file
+        source_filename = source_file_path.name
+        test_filename = f"test_{source_filename}"
+        test_file_rel_path = f"tests/{test_filename}"
+        test_file_abs_path = project_manager.active_project_path / test_file_rel_path
+
+        # Save the file and stage it in Git
+        self.log("info", f"Saving generated test file to: {test_file_abs_path}")
+        test_file_abs_path.parent.mkdir(parents=True, exist_ok=True)
+        test_file_abs_path.write_text(test_content, encoding='utf-8')
+
+        # --- FIX: Call methods on git_manager, not project_manager ---
+        if project_manager.git_manager:
+            project_manager.git_manager.stage_file(test_file_rel_path)
+            project_manager.git_manager.commit_staged_files(f"feat: Add unit tests for {function_name}")
+        # --- END FIX ---
+
+        # Notify UI to open the new file and refresh the tree
+        self.event_bus.emit("file_content_updated", test_file_rel_path, test_content)
+        self.event_bus.emit("test_file_generated", test_file_rel_path)
+        self.event_bus.emit("ai_workflow_finished") # Reset status bar
 
     def log(self, level: str, message: str, **kwargs):
         self.event_bus.emit("log_message_received", "WorkflowManager", level, message, **kwargs)

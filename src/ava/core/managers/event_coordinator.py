@@ -66,6 +66,7 @@ class EventCoordinator:
         self._wire_status_bar_events()
         self._wire_lsp_events()
         self._wire_visualizer_events()
+        self._wire_test_lab_events() # NEW
 
         # Allows plugins to request core manager instances for advanced operations.
         self.event_bus.subscribe(
@@ -74,6 +75,19 @@ class EventCoordinator:
         )
 
         logger.info("All events wired successfully.")
+
+    def _wire_test_lab_events(self) -> None:
+        """Wire events for the Test Lab feature."""
+        if not self.window_manager:
+            return
+        code_viewer = self.window_manager.get_code_viewer()
+        if not code_viewer or not hasattr(code_viewer, 'file_tree_manager'):
+            logger.warning("FileTreeManager not available for Test Lab event wiring.")
+            return
+
+        self.event_bus.subscribe("test_file_generated",
+                                 lambda path: code_viewer.file_tree_manager.refresh_tree_from_disk())
+        logger.info("Test Lab events wired.")
 
     def _wire_visualizer_events(self) -> None:
         """Wire events for the real-time project visualizer."""

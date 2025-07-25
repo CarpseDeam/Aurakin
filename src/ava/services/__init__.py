@@ -11,6 +11,7 @@ from .project_analyzer import ProjectAnalyzer
 from .project_indexer_service import ProjectIndexerService
 from .rag_service import RAGService
 from .response_validator_service import ResponseValidatorService
+from .test_generation_service import TestGenerationService
 
 
 __all__ = [
@@ -26,4 +27,5 @@ __all__ = [
     "ProjectIndexerService",
     "RAGService",
     "ResponseValidatorService",
+    "TestGenerationService",
 ]

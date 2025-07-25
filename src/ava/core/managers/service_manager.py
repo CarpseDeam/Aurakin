@@ -16,7 +16,7 @@ from src.ava.services import (
     ActionService, AppStateService,
     ProjectIndexerService, ImportFixerService,
     GenerationCoordinator, RAGService,
-    LSPClientService
+    LSPClientService, TestGenerationService
 )
 
 if TYPE_CHECKING:
@@ -44,6 +44,7 @@ class ServiceManager:
         self.project_indexer_service: ProjectIndexerService = None
         self.import_fixer_service: ImportFixerService = None
         self.generation_coordinator: GenerationCoordinator = None
+        self.test_generation_service: TestGenerationService = None
         self._service_injection_enabled = True
 
         self.rag_server_process: Optional[subprocess.Popen] = None
@@ -86,6 +87,11 @@ class ServiceManager:
         self.lsp_client_service = LSPClientService(self.event_bus, self.project_manager)
 
         self.generation_coordinator = GenerationCoordinator(
+            service_manager=self,
+            event_bus=self.event_bus
+        )
+
+        self.test_generation_service = TestGenerationService(
             service_manager=self,
             event_bus=self.event_bus
         )
@@ -278,6 +284,9 @@ class ServiceManager:
 
     def get_generation_coordinator(self) -> GenerationCoordinator:
         return self.generation_coordinator
+
+    def get_test_generation_service(self) -> TestGenerationService:
+        return self.test_generation_service
 
     def get_plugin_manager(self) -> PluginManager:
         return self.plugin_manager
