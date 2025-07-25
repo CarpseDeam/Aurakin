@@ -1,52 +1,43 @@
 # src/ava/services/code_structure_service.py
-import ast
+import re
 from typing import Dict, Any
 
 
 class CodeStructureService:
     """
-    Uses Python's Abstract Syntax Tree (AST) module to parse the structure of
-    Python source code. This is a fast and 100% reliable alternative to using
-    an LLM for code analysis.
+    Uses a resilient regex-based approach to discover the names of classes and functions
+    for visualization. This is not a full parser but is robust against syntax errors.
     """
 
     def parse_structure(self, code: str) -> Dict[str, Any]:
         """
-        Parses Python code and returns a dictionary of its classes and functions.
+        Scans Python code and returns a dictionary of its classes and functions.
+        This method is designed to be resilient and will find names even if the
+        file has syntax errors.
 
         Args:
             code: The Python source code as a string.
 
         Returns:
-            A dictionary detailing the classes (with methods) and standalone functions.
+            A dictionary detailing the names of classes and standalone functions.
+            The 'code' value is intentionally left blank as this is not a full parser.
         """
         structure = {"classes": {}, "functions": {}}
-        try:
-            tree = ast.parse(code)
-            for node in tree.body:
-                # Handle standalone functions
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    func_name = node.name
-                    func_code = ast.get_source_segment(code, node)
-                    if func_code:
-                        structure["functions"][func_name] = func_code
 
-                # Handle classes and their methods
-                elif isinstance(node, ast.ClassDef):
-                    class_name = node.name
-                    class_code = ast.get_source_segment(code, node)
-                    class_info = {"methods": {}, "code": class_code or ""}
-                    for item in node.body:
-                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                            method_name = item.name
-                            method_code = ast.get_source_segment(code, item)
-                            if method_code:
-                                class_info["methods"][method_name] = method_code
-                    structure["classes"][class_name] = class_info
-        except SyntaxError as e:
-            # --- THIS IS THE FIX ---
-            # Instead of failing silently, print the error so we know which file is broken.
-            print(f"[CodeStructureService] ERROR: Failed to parse a file due to SyntaxError: {e}")
-            # --- END OF FIX ---
-            return {"classes": {}, "functions": {}}
+        # Regex to find top-level class and function definitions.
+        # It captures the name of the class/function.
+        # It's simplified to look for lines starting with 'class' or 'def'.
+        pattern = re.compile(r"^(class|def)\s+([a-zA-Z_]\w*)")
+
+        for line in code.splitlines():
+            match = pattern.match(line.strip())
+            if match:
+                keyword, name = match.groups()
+                if keyword == "class":
+                    # For visualization, we only need the name. The code block
+                    # will be extracted on-demand by the CodeExtractorService.
+                    structure["classes"][name] = {"methods": {}, "code": ""}
+                elif keyword == "def":
+                    structure["functions"][name] = ""  # Just the name is needed.
+
         return structure

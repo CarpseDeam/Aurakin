@@ -16,7 +16,7 @@ from src.ava.services import (
     ActionService, AppStateService,
     ProjectIndexerService, ImportFixerService,
     GenerationCoordinator, RAGService,
-    LSPClientService, TestGenerationService
+    LSPClientService, TestGenerationService, CodeExtractorService
 )
 
 if TYPE_CHECKING:
@@ -45,6 +45,7 @@ class ServiceManager:
         self.import_fixer_service: ImportFixerService = None
         self.generation_coordinator: GenerationCoordinator = None
         self.test_generation_service: TestGenerationService = None
+        self.code_extractor_service: CodeExtractorService = None
         self._service_injection_enabled = True
 
         self.rag_server_process: Optional[subprocess.Popen] = None
@@ -79,6 +80,7 @@ class ServiceManager:
         self.app_state_service = AppStateService(self.event_bus)
         self.project_indexer_service = ProjectIndexerService()
         self.import_fixer_service = ImportFixerService()
+        self.code_extractor_service = CodeExtractorService()
 
         self.rag_manager = RAGManager(self.event_bus, self.project_root)
         if self.project_manager:
@@ -242,7 +244,6 @@ class ServiceManager:
         self.llm_server_process = self.rag_server_process = self.lsp_server_process = None
         self.log_to_event_bus("info", "[ServiceManager] Background server process handles set to None.")
 
-
     async def shutdown(self):
         self.log_to_event_bus("info", "[ServiceManager] Shutting down services...")
         if self.lsp_client_service: await self.lsp_client_service.shutdown()
@@ -287,6 +288,9 @@ class ServiceManager:
 
     def get_test_generation_service(self) -> TestGenerationService:
         return self.test_generation_service
+
+    def get_code_extractor_service(self) -> CodeExtractorService:
+        return self.code_extractor_service
 
     def get_plugin_manager(self) -> PluginManager:
         return self.plugin_manager

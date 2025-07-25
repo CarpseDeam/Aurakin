@@ -87,13 +87,13 @@ class ProjectVisualizerWindow(QMainWindow):
 
     def _request_unit_test_generation(self, node: ProjectNode):
         self.log("info", f"User requested unit tests for function: {node.name}")
+        # --- MODIFICATION: Send the name and path, not the code ---
         self.event_bus.emit(
             "unit_test_generation_requested",
-            node.name,
-            node.full_code,
-            node.path
+            node.name,       # The function name
+            node.path        # The full path to the source file
         )
-        # For now, we just log it. The next step will be to hook this up to the Tester AI.
+        # --- END MODIFICATION ---
         QTimer.singleShot(100,
                           lambda: self.log("success", "Event 'unit_test_generation_requested' emitted successfully."))
 

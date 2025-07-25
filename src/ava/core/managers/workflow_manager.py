@@ -114,17 +114,32 @@ class WorkflowManager:
         if workflow_coroutine:
             self.task_manager.start_ai_workflow_task(workflow_coroutine)
 
-    async def handle_test_generation_request(self, function_name: str, function_code: str, source_file_path_str: str):
+    async def handle_test_generation_request(self, function_name: str, source_file_path_str: str):
         """Handles the request from the UI to generate a unit test for a function."""
         self.log("info", f"Test generation request received for '{function_name}'.")
         test_generation_service = self.service_manager.get_test_generation_service()
         project_manager = self.service_manager.get_project_manager()
+        extractor_service = self.service_manager.get_code_extractor_service()
 
-        if not test_generation_service or not project_manager or not project_manager.active_project_path:
+        if not all([test_generation_service, project_manager, extractor_service, project_manager.active_project_path]):
             self.log("error", "Cannot generate test: Services or active project not available.")
             return
 
+        # --- NEW: Surgically extract the function code first ---
         source_file_path = Path(source_file_path_str)
+        try:
+            file_content = source_file_path.read_text(encoding='utf-8')
+            function_code = extractor_service.extract_code_block(file_content, function_name)
+            if not function_code:
+                self.log("error", f"Code Extractor failed to find function '{function_name}' in '{source_file_path.name}'.")
+                self.event_bus.emit("ai_workflow_finished")
+                return
+        except Exception as e:
+            self.log("error", f"Failed to read or extract from source file: {e}")
+            self.event_bus.emit("ai_workflow_finished")
+            return
+        # --- END NEW ---
+
         relative_source_path = source_file_path.relative_to(project_manager.active_project_path).as_posix()
 
         # Generate the test content
@@ -148,11 +163,9 @@ class WorkflowManager:
         test_file_abs_path.parent.mkdir(parents=True, exist_ok=True)
         test_file_abs_path.write_text(test_content, encoding='utf-8')
 
-        # --- FIX: Call methods on git_manager, not project_manager ---
         if project_manager.git_manager:
             project_manager.git_manager.stage_file(test_file_rel_path)
             project_manager.git_manager.commit_staged_files(f"feat: Add unit tests for {function_name}")
-        # --- END FIX ---
 
         # Notify UI to open the new file and refresh the tree
         self.event_bus.emit("file_content_updated", test_file_rel_path, test_content)
