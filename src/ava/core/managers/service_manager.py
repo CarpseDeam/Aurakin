@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Optional
 import traceback  # For detailed error logging
 import asyncio
 
-# --- NEW: Import the process manager module ---
 from src.ava.core import process_manager
 
 from src.ava.core.event_bus import EventBus
@@ -19,7 +18,8 @@ from src.ava.services import (
     ActionService, AppStateService,
     ProjectIndexerService, ImportFixerService,
     GenerationCoordinator, RAGService,
-    LSPClientService, TestGenerationService, CodeExtractorService
+    LSPClientService, TestGenerationService, CodeExtractorService,
+    ExecutionService
 )
 
 if TYPE_CHECKING:
@@ -49,9 +49,8 @@ class ServiceManager:
         self.generation_coordinator: GenerationCoordinator = None
         self.test_generation_service: TestGenerationService = None
         self.code_extractor_service: CodeExtractorService = None
+        self.execution_service: ExecutionService = None
         self._service_injection_enabled = True
-
-        # --- REMOVED: Process handles are now managed by the central ProcessManager ---
 
         self.log_to_event_bus("info", "[ServiceManager] Initialized")
 
@@ -82,6 +81,7 @@ class ServiceManager:
         self.project_indexer_service = ProjectIndexerService()
         self.import_fixer_service = ImportFixerService()
         self.code_extractor_service = CodeExtractorService()
+        self.execution_service = ExecutionService(self.event_bus, self.project_manager)
 
         self.rag_manager = RAGManager(self.event_bus, self.project_root)
         if self.project_manager:
@@ -176,7 +176,6 @@ class ServiceManager:
             source_repo_root = self.project_root.parent
             env["PYTHONPATH"] = str(source_repo_root)
 
-        # --- MODIFIED: Launch and register LLM server ---
         self.log_to_event_bus("info", "Attempting to launch LLM server...")
         try:
             with open(llm_subprocess_log_file, "w", encoding="utf-8") as llm_log_handle:
@@ -192,7 +191,6 @@ class ServiceManager:
         except Exception as e:
             self.log_to_event_bus("error", f"Failed to launch LLM server: {e}\n{traceback.format_exc()}")
 
-        # --- MODIFIED: Launch and register RAG server ---
         self.log_to_event_bus("info", "Attempting to launch RAG server...")
         try:
             with open(rag_subprocess_log_file, "w", encoding="utf-8") as rag_log_handle:
@@ -208,7 +206,6 @@ class ServiceManager:
         except Exception as e:
             self.log_to_event_bus("error", f"Failed to launch RAG server: {e}\n{traceback.format_exc()}")
 
-        # --- MODIFIED: Launch and register LSP server ---
         self.log_to_event_bus("info", "Attempting to launch Python LSP server...")
         lsp_command = [python_executable_to_use, "-m", "pylsp", "--tcp", "--port", "8003"]
         try:
@@ -231,13 +228,13 @@ class ServiceManager:
 
     def terminate_background_servers(self):
         """Terminates background servers by calling the central ProcessManager."""
-        self.log_to_event_bus("info", "[ServiceManager] Handing off to ProcessManager to terminate background servers...")
+        self.log_to_event_bus("info",
+                              "[ServiceManager] Handing off to ProcessManager to terminate background servers...")
         process_manager.terminate_all()
 
     async def shutdown(self):
         self.log_to_event_bus("info", "[ServiceManager] Shutting down services...")
         if self.lsp_client_service: await self.lsp_client_service.shutdown()
-        # This is now a synchronous call, but it's much faster and more reliable.
         self.terminate_background_servers()
         if self.plugin_manager and hasattr(self.plugin_manager, 'shutdown'):
             try:
@@ -281,6 +278,9 @@ class ServiceManager:
 
     def get_code_extractor_service(self) -> CodeExtractorService:
         return self.code_extractor_service
+
+    def get_execution_service(self) -> ExecutionService:
+        return self.execution_service
 
     def get_plugin_manager(self) -> PluginManager:
         return self.plugin_manager

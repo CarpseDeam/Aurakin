@@ -2,7 +2,7 @@
 import logging
 from pathlib import Path
 from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter,
-                               QTabWidget, QMessageBox)
+                               QTabWidget, QMessageBox, QDockWidget)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCloseEvent
 import qasync
@@ -16,6 +16,7 @@ from src.ava.gui.find_replace_dialog import FindReplaceDialog
 from src.ava.gui.quick_file_finder import QuickFileFinder
 from src.ava.gui.status_bar import StatusBar
 from src.ava.services.lsp_client_service import LSPClientService
+from src.ava.gui.executor_log_panel import ExecutorLogPanel
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ class CodeViewerWindow(QMainWindow):
         self.lsp_client = lsp_client
         self.editor_manager: EditorTabManager = None
         self.file_tree_manager: FileTreeManager = None
+        self.executor_log_panel: ExecutorLogPanel = None
+        self.executor_dock: QDockWidget = None
 
         self.find_replace_dialog: FindReplaceDialog = None
         self.quick_file_finder: QuickFileFinder = None
@@ -50,11 +53,8 @@ class CodeViewerWindow(QMainWindow):
         """
         Initializes the user interface, setting up the main layout and widgets.
         """
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(5, 5, 5, 5)
         main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.setCentralWidget(main_splitter)
 
         # --- Left Panel: File Tree ---
         file_tree_panel_widget = QWidget()
@@ -68,18 +68,22 @@ class CodeViewerWindow(QMainWindow):
         main_splitter.addWidget(file_tree_panel_widget)
 
         # --- Right Panel: Editor Tabs Only ---
-        # The vertical splitter and PanelManager have been removed.
         tab_widget = QTabWidget()
         tab_widget.setTabsClosable(True)
         tab_widget.setMovable(True)
         tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
         self.editor_manager = EditorTabManager(tab_widget, self.event_bus, self.project_manager)
         self.editor_manager.set_lsp_client(self.lsp_client)
-        main_splitter.addWidget(tab_widget) # Add tab_widget directly to the main splitter
+        main_splitter.addWidget(tab_widget)
 
         main_splitter.setSizes([300, 1100])
 
-        main_layout.addWidget(main_splitter)
+        # --- NEW: Executor Log Panel as a Dock Widget ---
+        self.executor_dock = QDockWidget("Executor Log", self)
+        self.executor_dock.setObjectName("ExecutorLogDock")
+        self.executor_log_panel = ExecutorLogPanel()
+        self.executor_dock.setWidget(self.executor_log_panel)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.executor_dock)
 
         self.status_bar = StatusBar(self.event_bus)
         self.setStatusBar(self.status_bar)
@@ -111,6 +115,12 @@ class CodeViewerWindow(QMainWindow):
         quick_open_action.setShortcut(QKeySequence("Ctrl+P"))
         quick_open_action.triggered.connect(self._show_quick_file_finder)
         go_menu.addAction(quick_open_action)
+
+        # --- NEW: View Menu for toggling panels ---
+        view_menu = menubar.addMenu("View")
+        toggle_executor_log_action = self.executor_dock.toggleViewAction()
+        toggle_executor_log_action.setText("Executor Log Panel")
+        view_menu.addAction(toggle_executor_log_action)
 
     def _setup_shortcuts(self) -> None:
         save_shortcut = QShortcut(QKeySequence.StandardKey.Save, self)
@@ -224,7 +234,6 @@ class CodeViewerWindow(QMainWindow):
         """
         logger.info(f"[CodeViewer] Displaying {len(files)} file(s) and refreshing UI.")
         for filename, content in files.items():
-            # Pass the relative filename directly; the manager will handle it.
             self.editor_manager.create_or_update_tab(filename, content)
 
     def display_scaffold(self, scaffold_files: dict):

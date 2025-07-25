@@ -66,7 +66,8 @@ class EventCoordinator:
         self._wire_status_bar_events()
         self._wire_lsp_events()
         self._wire_visualizer_events()
-        self._wire_test_lab_events() # NEW
+        self._wire_test_lab_events()
+        self._wire_executor_events() # NEW
 
         # Allows plugins to request core manager instances for advanced operations.
         self.event_bus.subscribe(
@@ -75,6 +76,22 @@ class EventCoordinator:
         )
 
         logger.info("All events wired successfully.")
+
+    def _wire_executor_events(self) -> None:
+        """Wire events for the command execution engine and its log viewer."""
+        if not self.window_manager:
+            return
+        code_viewer = self.window_manager.get_code_viewer()
+        if not code_viewer or not hasattr(code_viewer, 'executor_log_panel'):
+            logger.warning("ExecutorLogPanel not available for event wiring.")
+            return
+
+        executor_panel = code_viewer.executor_log_panel
+        # When a command starts, clear the panel.
+        self.event_bus.subscribe("execute_command_requested", lambda command: executor_panel.clear_output())
+        # Append each line of output as it's received.
+        self.event_bus.subscribe("terminal_output_received", executor_panel.append_output)
+        logger.info("Executor events wired.")
 
     def _wire_test_lab_events(self) -> None:
         """Wire events for the Test Lab feature."""
@@ -98,18 +115,12 @@ class EventCoordinator:
             logger.warning("ProjectVisualizer not available for event wiring.")
             return
 
-        # The ONLY event the visualizer needs for generation now is the scaffold.
         self.event_bus.subscribe("project_scaffold_generated", visualizer.display_scaffold)
-
-        # These events are for loading existing projects or refreshing after completion.
         self.event_bus.subscribe("project_root_selected", visualizer.display_existing_project)
         self.event_bus.subscribe("workflow_finalized", lambda final_code: visualizer.display_existing_project(
             self.service_manager.project_manager.active_project_path))
-
-        # --- NEW: Connect animation events ---
         self.event_bus.subscribe("agent_activity_started", visualizer._handle_agent_activity)
         self.event_bus.subscribe("ai_workflow_finished", visualizer._deactivate_all_connections)
-
         logger.info("Project Visualizer events wired.")
 
     def _wire_lsp_events(self) -> None:
@@ -223,17 +234,12 @@ class EventCoordinator:
         if code_viewer and hasattr(code_viewer, 'editor_manager'):
             editor_manager = code_viewer.editor_manager
 
-            # --- NEW: Connect scaffold and update events ---
             self.event_bus.subscribe("project_scaffold_generated", code_viewer.display_scaffold)
             self.event_bus.subscribe("file_content_updated", editor_manager.create_or_update_tab)
-
-            # --- Surgical and Streaming Edit Events ---
             self.event_bus.subscribe("highlight_lines_for_edit", editor_manager.handle_highlight_lines)
             self.event_bus.subscribe("delete_highlighted_lines", editor_manager.handle_delete_lines)
             self.event_bus.subscribe("stream_text_at_cursor", editor_manager.handle_stream_at_cursor)
             self.event_bus.subscribe("finalize_editor_content", editor_manager.handle_finalize_content)
-
-            # --- NEW: Control LSP diagnostics during generation ---
             self.event_bus.subscribe("build_workflow_started", lambda: editor_manager.set_generating_state(True))
             self.event_bus.subscribe("ai_workflow_finished", lambda: editor_manager.set_generating_state(False))
         else:

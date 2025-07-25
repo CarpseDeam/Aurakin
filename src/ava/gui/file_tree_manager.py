@@ -193,16 +193,13 @@ class FileTreeManager(QObject):
             '.venv', 'venv', '.git', '.tox', 'build', 'dist'
         }
 
-        # Main widget and layout for this manager
         self.container_widget = QWidget(tree_widget_parent)
         self.container_layout = QVBoxLayout(self.container_widget)
         self.container_layout.setContentsMargins(0, 5, 0, 0)
         self.container_layout.setSpacing(5)
 
-        # Action bar at the top
         self._create_action_bar()
 
-        # The tree widget itself
         self.tree_widget = CustomFileTreeWidget(self.container_widget)
         self.tree_widget.set_project_manager(project_manager)
         self.container_layout.addWidget(self.tree_widget)
@@ -315,7 +312,6 @@ class FileTreeManager(QObject):
             return False
 
     def refresh_tree_from_disk(self):
-        """Public method to trigger a refresh of the file tree."""
         if self.project_manager and self.project_manager.active_project_path:
             self.log("info", "Refreshing file tree from disk...")
             self.load_existing_project_tree(self.project_manager.active_project_path)
@@ -474,6 +470,42 @@ class FileTreeManager(QObject):
             item_at_pos.setSelected(True)
             selected_items = [item_at_pos]
 
+        # --- Executor Actions ---
+        if len(selected_items) == 1:
+            item = selected_items[0]
+            item_name = item.text(0)
+            is_dir = item.data(0, Qt.ItemDataRole.UserRole + 1)
+
+            # Action: Run Tests
+            if is_dir and item_name == "tests":
+                run_tests_action = QAction(qta.icon("fa5s.vial", color=Colors.TEXT_SECONDARY.name()), "Run Tests", menu)
+                run_tests_action.triggered.connect(
+                    lambda: self.event_bus.emit("execute_command_requested", "pytest")
+                )
+                menu.addAction(run_tests_action)
+
+            # Action: Install Dependencies
+            if not is_dir and item_name == "requirements.txt":
+                install_deps_action = QAction(qta.icon("fa5s.download", color=Colors.TEXT_SECONDARY.name()),
+                                              "Install Dependencies", menu)
+                install_deps_action.triggered.connect(
+                    lambda: self.event_bus.emit("execute_command_requested", "pip install -r requirements.txt")
+                )
+                menu.addAction(install_deps_action)
+
+            # Action: Run Project
+            if not is_dir and item_name == "main.py":
+                run_project_action = QAction(qta.icon("fa5s.play", color=Colors.TEXT_SECONDARY.name()), "Run Project",
+                                             menu)
+                run_project_action.triggered.connect(
+                    lambda: self.event_bus.emit("execute_command_requested", "python main.py")
+                )
+                menu.addAction(run_project_action)
+
+        if not menu.isEmpty():
+            menu.addSeparator()
+
+        # --- File System Actions ---
         target_item_for_new = item_at_pos
         if not target_item_for_new:
             target_item_for_new = self.tree_widget.topLevelItem(0)
@@ -497,7 +529,6 @@ class FileTreeManager(QObject):
             if self._get_relative_path(item) != ".":
                 rename_action = menu.addAction("Rename")
                 rename_action.triggered.connect(lambda: self._handle_rename(item))
-
                 delete_action = menu.addAction("Delete")
                 delete_action.triggered.connect(lambda: self._handle_delete(selected_items))
 
@@ -506,6 +537,10 @@ class FileTreeManager(QObject):
             if items_for_multi_delete:
                 delete_action = menu.addAction(f"Delete {len(items_for_multi_delete)} items")
                 delete_action.triggered.connect(lambda: self._handle_delete(items_for_multi_delete))
+
+        # Cleanup trailing separator
+        if not menu.isEmpty() and menu.actions()[-1].isSeparator():
+            menu.removeAction(menu.actions()[-1])
 
         if not menu.isEmpty():
             menu.exec(self.tree_widget.viewport().mapToGlobal(position))

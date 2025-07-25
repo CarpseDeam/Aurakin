@@ -13,6 +13,7 @@ from .rag_service import RAGService
 from .response_validator_service import ResponseValidatorService
 from .test_generation_service import TestGenerationService
 from .code_extractor_service import CodeExtractorService
+from .execution_service import ExecutionService
 
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "ResponseValidatorService",
     "TestGenerationService",
     "CodeExtractorService",
+    "ExecutionService",
 ]
