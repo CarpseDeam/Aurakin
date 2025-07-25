@@ -3,11 +3,16 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from collections import defaultdict
+import qasync
+
 from PySide6.QtCore import (
     QPointF,
     QRectF,
     Qt,
     QTimer,
+    QPropertyAnimation,
+    QParallelAnimationGroup,
+    QEasingCurve,
 )
 from PySide6.QtGui import (
     QBrush,
@@ -27,18 +32,19 @@ from PySide6.QtWidgets import (
 from src.ava.core.event_bus import EventBus
 from src.ava.core.project_manager import ProjectManager
 from src.ava.gui.components import Colors
-from src.ava.gui.node_viewer.project_node import ProjectNode
+from src.ava.gui.node_viewer import ProjectNode
 from src.ava.gui.node_viewer.animated_connection import AnimatedConnection
 from src.ava.services.code_structure_service import CodeStructureService
 
 logger = logging.getLogger(__name__)
 
+# Constants for layout
 COLUMN_WIDTH = 250
-ROW_HEIGHT = 70
+ROW_HEIGHT = 65  # Tighter row spacing
 
 
 class ZoomableView(QGraphicsView):
-    """A QGraphicsView that supports zooming and right-click context menus."""
+    """A QGraphicsView that supports zooming and panning."""
 
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
@@ -47,6 +53,7 @@ class ZoomableView(QGraphicsView):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
     def wheelEvent(self, event: QWheelEvent):
+        """Zoom in and out with the mouse wheel."""
         zoom_in_factor = 1.15
         zoom_out_factor = 1 / zoom_in_factor
         zoom_factor = zoom_in_factor if event.angleDelta().y() > 0 else zoom_out_factor
@@ -54,7 +61,7 @@ class ZoomableView(QGraphicsView):
 
 
 class ProjectVisualizerWindow(QMainWindow):
-    """The main window for the project visualizer, now with deep code inspection."""
+    """The main window for the project visualizer, now with deep code inspection and collapsible nodes."""
 
     def __init__(self, event_bus: EventBus, project_manager: ProjectManager):
         super().__init__()
@@ -62,142 +69,93 @@ class ProjectVisualizerWindow(QMainWindow):
         self.project_manager = project_manager
         self.code_structure_service = CodeStructureService()
         self.nodes: Dict[str, ProjectNode] = {}
-        self.connections: Dict[str, AnimatedConnection] = {}
+        self.connections: List[AnimatedConnection] = []
         self._active_connection: Optional[AnimatedConnection] = None
-        self._positions: Dict[str, QPointF] = {}
+        self._animation_group = QParallelAnimationGroup()
 
         self.setWindowTitle("Project Visualizer (Test Lab)")
         self.setGeometry(150, 150, 1200, 800)
         self.scene = QGraphicsScene()
         self.scene.setBackgroundBrush(QColor(Colors.PRIMARY_BG))
 
-        self.view = ZoomableView(self.scene)
+        self.view = ZoomableView(self.scene, self)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.view.customContextMenuRequested.connect(self._show_context_menu)
         self.setCentralWidget(self.view)
 
     def _show_context_menu(self, pos):
+        """Show context menu for generating tests on function nodes."""
         item = self.view.itemAt(pos)
         if isinstance(item, ProjectNode) and item.node_type == 'function':
             menu = QMenu(self.view)
-            action = menu.addAction("Generate Unit Tests")
+            action = menu.addAction(f"Generate Unit Tests for {item.name}()")
             action.triggered.connect(lambda: self._request_unit_test_generation(item))
             menu.exec(self.view.mapToGlobal(pos))
 
     def _request_unit_test_generation(self, node: ProjectNode):
+        """Emit event to request unit test generation for a function."""
         self.log("info", f"User requested unit tests for function: {node.name}")
-        # --- MODIFICATION: Send the name and path, not the code ---
         self.event_bus.emit(
             "unit_test_generation_requested",
-            node.name,       # The function name
-            node.path        # The full path to the source file
+            node.name,
+            node.path
         )
-        # --- END MODIFICATION ---
-        QTimer.singleShot(100,
-                          lambda: self.log("success", "Event 'unit_test_generation_requested' emitted successfully."))
+        QTimer.singleShot(100, lambda: self.log("success", "Event 'unit_test_generation_requested' emitted."))
 
+    @qasync.Slot(dict)
     def display_scaffold(self, scaffold_files: Dict[str, str]):
+        """Entry point for displaying a new project scaffold."""
         if not self.project_manager.active_project_path: return
         self._render_project_structure(scaffold_files)
 
+    @qasync.Slot(str)
     def display_existing_project(self, project_path_str: str) -> None:
+        """Entry point for displaying an existing project from disk."""
         project_files = self.project_manager.get_project_files()
+        if not project_files:
+            self.log("warning", f"No readable files found in project: {project_path_str}")
+            self._clear_scene()
+            return
         self._render_project_structure(project_files)
 
     def _render_project_structure(self, project_files: Dict[str, str]):
-        """The main rendering entry point."""
         self._clear_scene()
         root_path = self.project_manager.active_project_path
         if not root_path: return
 
-        # Build a hierarchical tree from file paths and code structure
         tree = self._build_full_code_tree(project_files)
 
-        # Calculate positions for all nodes in the tree
-        self._positions = self._calculate_node_positions(tree, root_path)
-
-        # Create the root node for the project directory
         root_node = ProjectNode(root_path.name, str(root_path), 'folder')
         self.nodes[str(root_path)] = root_node
         self.scene.addItem(root_node)
-        root_node.setPos(self._positions[str(root_path)])
 
-        # Recursively create and draw all child nodes and connections
         self._create_nodes_recursively(tree, root_path, root_node)
-        QTimer.singleShot(50, self._fit_view_with_padding)
+
+        for node in self.nodes.values():
+            if node.parent_node and node.parent_node.parent_node:
+                node.is_expanded = False
+
+        self._set_children_visibility(root_node, root_node.is_expanded)
+
+        self._relayout_and_animate(fit_view=True)
 
     def _build_full_code_tree(self, project_files: Dict[str, str]) -> Dict:
-        """Builds a nested dictionary representing the project, including code structure."""
         tree = {}
         for path_str, content in project_files.items():
             parts = Path(path_str).parts
             level = tree
             for part in parts:
                 level = level.setdefault(part, {})
-
-            # If it's a Python file, parse its structure
-            if path_str.endswith('.py'):
-                structure = self.code_structure_service.parse_structure(content)
-                level['__structure__'] = structure
+            structure = self.code_structure_service.parse_structure(content)
+            level['__structure__'] = structure
         return tree
 
-    def _calculate_node_positions(self, tree: Dict, root_path: Path) -> Dict[str, QPointF]:
-        """Calculates the X, Y coordinates for every node in the hierarchy."""
-        positions = {}
-        y_map = defaultdict(int)
-
-        def layout_recursively(subtree: Dict, parent_path: Path, depth: int):
-            # Sort to ensure folders come before files
-            sorted_items = sorted(subtree.items(),
-                                  key=lambda item: not isinstance(item[1], dict) or item[0] == '__structure__')
-
-            for name, children in sorted_items:
-                if name == '__structure__': continue
-
-                current_path = parent_path / name
-                current_path_str = str(current_path)
-
-                # Position the file/folder node
-                x = depth * COLUMN_WIDTH
-                y = y_map[depth] * ROW_HEIGHT
-                positions[current_path_str] = QPointF(x, y)
-                y_map[depth] += 1
-
-                # If there's code structure, lay out its children
-                structure = children.get('__structure__')
-                if structure:
-                    y_map[depth + 1] = y_map[depth] - 1  # Align first child
-
-                    for class_name, class_info in structure.get('classes', {}).items():
-                        class_path_str = f"{current_path_str}::{class_name}"
-                        positions[class_path_str] = QPointF(x + COLUMN_WIDTH, y_map[depth + 1] * ROW_HEIGHT)
-                        y_map[depth + 1] += 1
-
-                        for method_name in class_info.get('methods', {}):
-                            method_path_str = f"{class_path_str}::{method_name}"
-                            positions[method_path_str] = QPointF(x + 2 * COLUMN_WIDTH, y_map[depth + 2] * ROW_HEIGHT)
-                            y_map[depth + 2] += 1
-
-                    y_map[depth + 2] = y_map[depth + 1]  # Reset for functions
-                    for func_name in structure.get('functions', {}):
-                        func_path_str = f"{current_path_str}::{func_name}"
-                        positions[func_path_str] = QPointF(x + COLUMN_WIDTH, y_map[depth + 1] * ROW_HEIGHT)
-                        y_map[depth + 1] += 1
-
-                # Recurse into subdirectories
-                if isinstance(children, dict) and children:
-                    layout_recursively(children, current_path, depth + 1)
-                    y_map[depth] = max(y_map[depth], y_map[depth + 1])
-
-        positions[str(root_path)] = QPointF(-COLUMN_WIDTH, 0)
-        layout_recursively(tree, root_path, 0)
-        return positions
-
-    def _create_nodes_recursively(self, subtree: Dict, parent_path: Path, parent_node: QGraphicsObject) -> None:
-        """Creates and draws all nodes and their connections based on the calculated positions."""
-        sorted_items = sorted(subtree.items(),
-                              key=lambda item: not isinstance(item[1], dict) or item[0] == '__structure__')
+    def _create_nodes_recursively(self, subtree: Dict, parent_path: Path, parent_node: ProjectNode) -> None:
+        sorted_items = sorted(subtree.items(), key=lambda item: (
+            '__structure__' in item[1],
+            item[0]
+        ))
 
         for name, children in sorted_items:
             if name == '__structure__': continue
@@ -205,84 +163,172 @@ class ProjectVisualizerWindow(QMainWindow):
             current_path = parent_path / name
             current_path_str = str(current_path)
             is_folder = isinstance(children, dict) and '__structure__' not in children
-
             node_type = 'folder' if is_folder else 'file'
-            node = ProjectNode(name, current_path_str, node_type)
-            self.nodes[current_path_str] = node
-            self.scene.addItem(node)
-            node.setPos(self._positions[current_path_str])
-            self._draw_connection(parent_node, node, current_path_str)
 
-            # If there's code structure, render its nodes
+            node = ProjectNode(name, current_path_str, node_type)
+            self._setup_new_node(node, parent_node, current_path_str)
+
             structure = children.get('__structure__')
             if structure:
-                file_node = node
-                for class_name, class_info in structure.get('classes', {}).items():
-                    class_path_str = f"{current_path_str}::{class_name}"
-                    class_node = ProjectNode(class_name, current_path_str, 'class', class_info['code'])
-                    self.nodes[class_path_str] = class_node
-                    self.scene.addItem(class_node)
-                    class_node.setPos(self._positions[class_path_str])
-                    self._draw_connection(file_node, class_node, class_path_str)
-
-                    for method_name, method_code in class_info.get('methods', {}).items():
-                        method_path_str = f"{class_path_str}::{method_name}"
-                        method_node = ProjectNode(method_name, current_path_str, 'function', method_code)
-                        self.nodes[method_path_str] = method_node
-                        self.scene.addItem(method_node)
-                        method_node.setPos(self._positions[method_path_str])
-                        self._draw_connection(class_node, method_node, method_path_str)
-
-                for func_name, func_code in structure.get('functions', {}).items():
-                    func_path_str = f"{current_path_str}::{func_name}"
-                    func_node = ProjectNode(func_name, current_path_str, 'function', func_code)
-                    self.nodes[func_path_str] = func_node
-                    self.scene.addItem(func_node)
-                    func_node.setPos(self._positions[func_path_str])
-                    self._draw_connection(file_node, func_node, func_path_str)
+                self._create_structure_nodes(structure, current_path_str, node)
 
             if is_folder and children:
                 self._create_nodes_recursively(children, current_path, node)
+
+    def _create_structure_nodes(self, structure: Dict, file_path_str: str, file_node: ProjectNode):
+        for class_name in structure.get('classes', {}):
+            class_path_key = f"{file_path_str}::{class_name}"
+            class_node = ProjectNode(class_name, file_path_str, 'class')
+            self._setup_new_node(class_node, file_node, class_path_key)
+
+        for func_name in structure.get('functions', {}):
+            func_path_key = f"{file_path_str}::{func_name}"
+            func_node = ProjectNode(func_name, file_path_str, 'function')
+            self._setup_new_node(func_node, file_node, func_path_key)
+
+    def _setup_new_node(self, child_node: ProjectNode, parent_node: ProjectNode, node_key: str):
+        self.nodes[node_key] = child_node
+        self.scene.addItem(child_node)
+        child_node.parent_node = parent_node
+        parent_node.child_nodes.append(child_node)
+        child_node.toggle_requested.connect(lambda n=child_node: self._handle_node_toggle(n))
+        self._create_connection(parent_node, child_node)
+
+    def _create_connection(self, start_node: ProjectNode, end_node: ProjectNode) -> AnimatedConnection:
+        connection = AnimatedConnection(start_node, end_node)
+        self.scene.addItem(connection)
+        start_node.add_connection(connection, is_outgoing=True)
+        end_node.add_connection(connection, is_outgoing=False)
+        self.connections.append(connection)
+        return connection
+
+    def _handle_node_toggle(self, node: ProjectNode):
+        node.is_expanded = not node.is_expanded
+        self.log("info", f"Node '{node.name}' {'expanded' if node.is_expanded else 'collapsed'}.")
+
+        self._set_children_visibility(node, node.is_expanded)
+        self._relayout_and_animate()
+
+    def _set_children_visibility(self, parent_node: ProjectNode, is_visible: bool):
+        for child in parent_node.child_nodes:
+            child.setVisible(is_visible)
+            if child.incoming_connection:
+                child.incoming_connection.setVisible(is_visible)
+
+            if child.is_expanded and is_visible:
+                self._set_children_visibility(child, True)
+            else:
+                self._set_children_visibility(child, False)
+
+    def _calculate_node_positions(self) -> Dict[str, QPointF]:
+        positions = {}
+        y_map = defaultdict(int)
+
+        root_path = str(self.project_manager.active_project_path)
+        root_node = self.nodes.get(root_path)
+        if not root_node: return {}
+
+        def layout_recursively(node: ProjectNode, depth: int):
+            node_key = node.path if node.node_type in ['file', 'folder'] else f"{node.path}::{node.name}"
+
+            x = depth * COLUMN_WIDTH
+            y = y_map[depth] * ROW_HEIGHT
+            positions[node_key] = QPointF(x, y)
+            y_map[depth] += 1
+
+            if node.is_expanded:
+                sorted_children = sorted(node.child_nodes, key=lambda n: (n.node_type != 'folder', n.name))
+                for child in sorted_children:
+                    if child.isVisible():
+                        layout_recursively(child, depth + 1)
+
+            if depth + 1 in y_map:
+                y_map[depth] = max(y_map[depth], y_map[depth + 1])
+
+        layout_recursively(root_node, 0)
+        return positions
+
+    def _relayout_and_animate(self, fit_view: bool = False):
+        self.log("info", "Relaying out and animating nodes...")
+        new_positions = self._calculate_node_positions()
+
+        self._animation_group = QParallelAnimationGroup()
+
+        for node_key, node in self.nodes.items():
+            if node.isVisible() and node_key in new_positions:
+                target_pos = new_positions[node_key]
+                if node.pos() != target_pos:
+                    anim = QPropertyAnimation(node, b"pos")
+                    anim.setEndValue(target_pos)
+                    anim.setDuration(400)
+                    anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+                    self._animation_group.addAnimation(anim)
+
+        # --- FIX: Guarantee a final update of connection lines after animation ---
+        self._animation_group.finished.connect(self._update_all_connections)
+
+        if fit_view:
+            self._animation_group.finished.connect(self._fit_view_with_padding)
+
+        self._animation_group.start()
+
+    def _update_all_connections(self):
+        """Forces a redraw of all visible connection paths. Crucial after animation."""
+        if self.sender() == self._animation_group:
+            try:
+                self._animation_group.finished.disconnect(self._update_all_connections)
+            except (RuntimeError, TypeError):  # Can fail if already disconnected
+                pass
+
+        for conn in self.connections:
+            if conn.isVisible():
+                conn.update_path()
 
     def _clear_scene(self) -> None:
         self.scene.clear()
         self.nodes.clear()
         self.connections.clear()
         self._active_connection = None
-        self._positions.clear()
 
     def _fit_view_with_padding(self) -> None:
+        if self.sender() == self._animation_group:
+            try:
+                self._animation_group.finished.disconnect(self._fit_view_with_padding)
+            except (RuntimeError, TypeError):
+                pass
+
         rect = self.scene.itemsBoundingRect()
         if not rect.isValid(): return
         padding = 50
         rect.adjust(-padding, -padding, padding, padding)
         self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
-    def _draw_connection(self, start_node: QGraphicsObject, end_node: QGraphicsObject,
-                         end_node_path: str) -> AnimatedConnection:
-        connection = AnimatedConnection(start_node, end_node)
-        self.scene.addItem(connection)
-        start_node.add_connection(connection, is_outgoing=True)
-        end_node.add_connection(connection, is_outgoing=False)
-        self.connections[end_node_path] = connection
-        return connection
+    def _find_connection_for_target(self, target_path: str) -> Optional[AnimatedConnection]:
+        node = self.nodes.get(target_path)
+        if node and node.incoming_connection:
+            return node.incoming_connection
+
+        for node_key, node_item in self.nodes.items():
+            if node_key == target_path and node_item.incoming_connection:
+                return node_item.incoming_connection
+
+        return None
 
     def _handle_agent_activity(self, agent_name: str, target_file_path: str):
         self.log("info", f"Visualizing activity for Agent: {agent_name} on file: {Path(target_file_path).name}")
         if self._active_connection:
             self._active_connection.deactivate()
 
-        # We now connect to the file node, not just any node
-        connection = self.connections.get(target_file_path)
+        connection = self._find_connection_for_target(target_file_path)
         if not connection:
-            self.log("warning", f"Could not find a connection for file path: {target_file_path}")
+            self.log("warning", f"Could not find a connection for target path: {target_file_path}")
             return
 
         color = Colors.AGENT_ARCHITECT_COLOR if agent_name.lower() == "architect" else Colors.AGENT_CODER_COLOR
         connection.activate(color)
         self._active_connection = connection
 
-    def _deactivate_all_connections(self):
+    def _deactivate_all_connections(self, *args, **kwargs):
         self.log("info", "Workflow finished. Deactivating all visualizer connections.")
         if self._active_connection:
             self._active_connection.deactivate()
