@@ -171,67 +171,32 @@ class GenerationCoordinator(BaseGenerationService):
 
         # Phase 2: Animate and Apply Changes for each file
         for filename, new_content in rewritten_files.items():
-            if filename not in existing_files:
-                self.log("info", f"Creating new file as part of modification: {filename}")
-                self.event_bus.emit("file_content_updated", filename, "")  # Create empty tab
-                self.event_bus.emit("stream_text_at_cursor", filename, new_content)
-                self.event_bus.emit("finalize_editor_content", filename)
-                final_code[filename] = new_content
-                await asyncio.sleep(1.0)  # Pause to see new file
-                continue
 
-            original_content = existing_files[filename]
-            if original_content == new_content:
-                self.log("info", f"File '{filename}' was returned by AI but has no changes. Skipping.")
-                continue
+            # --- THE NEW, SIMPLIFIED LOGIC ---
+            # This replaces the complex diff animation with a simple, reliable "re-typing" animation.
 
-            self.log("info", f"Applying diff animation for '{filename}'")
-            await self._apply_diff_animation(filename, original_content, new_content)
+            self.log("info", f"Applying character-stream animation for '{filename}'")
+
+            # Activate the line in the node viewer
+            if self.project_manager and self.project_manager.active_project_path:
+                abs_path_str = str(self.project_manager.active_project_path / filename)
+                self.event_bus.emit("agent_activity_started", "Rewriter", abs_path_str)
+
+            # Instantly clear the editor content
+            self.event_bus.emit("file_content_updated", filename, "")
+            await asyncio.sleep(0.1)  # Give UI a moment to process the clear
+
+            # Stream the new content in character by character for a "typing" effect
+            for char in new_content:
+                self.event_bus.emit("stream_text_at_cursor", filename, char)
+                await asyncio.sleep(0.001)  # Tiny sleep to keep UI responsive and control typing speed
+
+            # Finalize the content and mark the editor as "clean"
+            self.event_bus.emit("finalize_editor_content", filename)
             final_code[filename] = new_content
+            await asyncio.sleep(0.5)  # A short pause before moving to the next file
+            # --- END OF NEW LOGIC ---
 
         self.log("success", "✅ Modification Workflow Finished Successfully.")
         self.event_bus.emit("ai_workflow_finished")
         return final_code
-
-    async def _apply_diff_animation(self, filename: str, original_content: str, new_content: str):
-        """Applies changes for a single file using diff and UI animations."""
-        original_lines = original_content.splitlines()
-        new_lines = new_content.splitlines()
-
-        matcher = difflib.SequenceMatcher(None, original_lines, new_lines, autojunk=False)
-
-        # We must process changes from bottom to top to keep line numbers valid.
-        for tag, i1, i2, j1, j2 in reversed(matcher.get_opcodes()):
-            if tag == 'equal':
-                continue
-
-            # Small delay between each animated change
-            await asyncio.sleep(0.2)
-
-            if tag == 'replace':
-                self.event_bus.emit("highlight_lines_for_edit", filename, i1 + 1, i2)
-                await asyncio.sleep(1.2)
-                self.event_bus.emit("delete_highlighted_lines", filename)
-                await asyncio.sleep(0.5)
-                replacement_text = "\n".join(new_lines[j1:j2])
-                self.event_bus.emit("stream_text_at_cursor", filename, replacement_text)
-                await asyncio.sleep(0.8)
-
-            elif tag == 'delete':
-                self.event_bus.emit("highlight_lines_for_edit", filename, i1 + 1, i2)
-                await asyncio.sleep(1.2)
-                self.event_bus.emit("delete_highlighted_lines", filename)
-                await asyncio.sleep(0.5)
-
-            elif tag == 'insert':
-                # For insert, i1 and i2 will be the same. We insert *before* this line.
-                self.event_bus.emit("position_cursor", filename, i1 + 1, 0)
-                await asyncio.sleep(0.5)
-                insertion_text = "\n".join(new_lines[j1:j2]) + '\n'
-                self.event_bus.emit("stream_text_at_cursor", filename, insertion_text)
-                await asyncio.sleep(0.8)
-
-        # After all animations are done for a file, do a final content sync
-        # to correct any minor animation artifacts and mark the file as clean.
-        self.event_bus.emit("file_content_updated", filename, new_content)
-        self.event_bus.emit("finalize_editor_content", filename)

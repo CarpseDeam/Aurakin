@@ -222,7 +222,9 @@ class ProjectVisualizerWindow(QMainWindow):
         positions = {}
         y_map = defaultdict(int)
 
-        root_path = str(self.project_manager.active_project_path)
+        root_path = str(self.project_manager.active_project_path) if self.project_manager.active_project_path else None
+        if not root_path: return {}
+
         root_node = self.nodes.get(root_path)
         if not root_node: return {}
 
@@ -250,14 +252,8 @@ class ProjectVisualizerWindow(QMainWindow):
         self.log("info", "Relaying out and animating nodes...")
         new_positions = self._calculate_node_positions()
 
-        # --- THIS IS THE FIX ---
-        # Stop any animation that might be in progress.
         self._animation_group.stop()
-
-        # Re-create the animation group. This is the cleanest way to ensure
-        # old connections are discarded and avoids the warning.
         self._animation_group = QParallelAnimationGroup()
-        # --- END OF FIX ---
 
         for node_key, node in self.nodes.items():
             if node.isVisible() and node_key in new_positions:
@@ -269,15 +265,12 @@ class ProjectVisualizerWindow(QMainWindow):
                     anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
                     self._animation_group.addAnimation(anim)
 
-        # Use a single, ordered handler for post-animation tasks
         self._animation_group.finished.connect(lambda: self._on_layout_animation_finished(fit_view))
         self._animation_group.start()
 
     def _on_layout_animation_finished(self, fit_view: bool):
         """A single handler to ensure operations happen in the correct order after animation."""
-        # First, update all connections to their new final positions.
         self._update_all_connections()
-        # THEN, if requested, fit the view to the now-correct bounding box.
         if fit_view:
             self._fit_view_with_padding()
 
@@ -302,13 +295,20 @@ class ProjectVisualizerWindow(QMainWindow):
         self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
     def _find_connection_for_target(self, target_path: str) -> Optional[AnimatedConnection]:
-        node = self.nodes.get(target_path)
+        # Normalize the path for comparison
+        norm_target_path = str(Path(target_path).resolve())
+
+        # Find the node that corresponds to this exact absolute path
+        node = self.nodes.get(norm_target_path)
         if node and node.incoming_connection:
             return node.incoming_connection
 
+        # Fallback for keys that might not be absolute paths (like for functions/classes)
         for node_key, node_item in self.nodes.items():
-            if node_key == target_path and node_item.incoming_connection:
-                return node_item.incoming_connection
+            # The 'path' attribute on the node is always the absolute file path
+            if hasattr(node_item, 'path') and str(Path(node_item.path).resolve()) == norm_target_path:
+                if node_item.incoming_connection:
+                    return node_item.incoming_connection
 
         return None
 
@@ -322,7 +322,15 @@ class ProjectVisualizerWindow(QMainWindow):
             self.log("warning", f"Could not find a connection for target path: {target_file_path}")
             return
 
-        color = Colors.AGENT_ARCHITECT_COLOR if agent_name.lower() == "architect" else Colors.AGENT_CODER_COLOR
+        # Assign a color based on the agent's role
+        agent_colors = {
+            "architect": Colors.AGENT_ARCHITECT_COLOR,
+            "coder": Colors.AGENT_CODER_COLOR,
+            "rewriter": Colors.ACCENT_GREEN,  # Let's give the rewriter a new color!
+            "healer": Colors.ACCENT_RED,
+        }
+        color = agent_colors.get(agent_name.lower(), Colors.ACCENT_BLUE)
+
         connection.activate(color)
         self._active_connection = connection
 
