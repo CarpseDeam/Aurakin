@@ -80,6 +80,23 @@ class ResponseValidatorService:
         # If we finish the loop and the stack is not empty, the JSON was truncated.
         return None
 
+    def extract_json_from_tag(self, raw_response: str, tag: str) -> Optional[Union[Dict, List]]:
+        """
+        Extracts content from a specific XML-style tag and parses it as JSON.
+        """
+        if not raw_response or not isinstance(raw_response, str):
+            return None
+
+        pattern = re.compile(f"<{tag}>(.*?)</{tag}>", re.DOTALL)
+        match = pattern.search(raw_response)
+
+        if not match:
+            return None
+
+        content_to_parse = match.group(1).strip()
+        # Now we can reuse our existing robust JSON parser on this smaller string
+        return self.extract_and_parse_json(content_to_parse)
+
     def _clean_scaffold_paths(self, scaffold: Dict[str, str]) -> Dict[str, str]:
         """
         Detects and removes a spurious common base directory from scaffold keys.

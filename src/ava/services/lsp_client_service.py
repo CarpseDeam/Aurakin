@@ -28,19 +28,35 @@ class LSPClientService:
         self._is_initialized = False
 
     async def connect(self) -> bool:
-        """Establishes a connection to the LSP server and starts the message listener."""
+        """
+        Establishes a connection to the LSP server, retrying a few times if it fails.
+        This makes the connection more robust against race conditions on startup.
+        """
         self.log("info", f"Attempting to connect to LSP server at {self.host}:{self.port}...")
-        try:
-            self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
-            self._listener_task = asyncio.create_task(self._listen_for_messages())
-            self.log("success", "Successfully connected to LSP server. Waiting for project to initialize session.")
-            return True
-        except ConnectionRefusedError:
-            self.log("error", "LSP server connection refused. Is the server running?")
-            return False
-        except Exception as e:
-            self.log("error", f"An unexpected error occurred during LSP connection: {e}")
-            return False
+
+        # --- NEW: Retry loop for robustness ---
+        max_retries = 5
+        retry_delay = 2.0  # seconds
+
+        for attempt in range(max_retries):
+            try:
+                self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
+                self._listener_task = asyncio.create_task(self._listen_for_messages())
+                self.log("success", f"Successfully connected to LSP server on attempt {attempt + 1}.")
+                return True
+            except ConnectionRefusedError:
+                self.log("warning",
+                         f"LSP connection refused (Attempt {attempt + 1}/{max_retries}). Server might still be starting. Retrying in {retry_delay}s...")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(retry_delay)
+                else:
+                    self.log("error", "LSP server connection refused after all retries. Is the server running?")
+                    return False
+            except Exception as e:
+                self.log("error", f"An unexpected error occurred during LSP connection: {e}")
+                return False
+        # --- END NEW ---
+        return False
 
     async def _listen_for_messages(self):
         """

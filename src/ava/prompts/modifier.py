@@ -1,77 +1,47 @@
 # src/ava/prompts/modifier.py
+"""
+This module contains the prompts for the "Rewrite and Diff" modification workflow.
+"""
 import textwrap
+from .master_rules import JSON_OUTPUT_RULE, S_TIER_ENGINEERING_PROTOCOL
 
-MODIFICATION_PLANNER_PROMPT = textwrap.dedent("""
-    You are an expert AI Software Surgeon. You will be given a user request and the complete source code of an existing application. Your task is to create a high-level surgical plan to implement the requested changes.
+MODIFICATION_REWRITER_PROMPT = textwrap.dedent(f"""
+    You are an S-Tier AI Software Engineer. Your task is to modify an existing Python codebase to implement a user's request by rewriting the necessary files.
 
     **USER REQUEST:**
     "{{user_request}}"
 
-    **EXISTING PROJECT FILES:**
+    ---
+    **EXISTING PROJECT FILES (Paths and Full Content):**
     ```json
     {{existing_files_json}}
     ```
     ---
-    **CRITICAL TASK: CREATE THE SURGICAL PLAN**
-    - Analyze the user's request and the existing code.
-    - Determine which files need to be modified and which new files need to be created.
-    - Output a single JSON object with two keys:
-        1. "files_to_create": A list of any brand new files that need to be added (e.g., "src/calculator/history.py"). Provide a "purpose" for each.
-        2. "files_to_modify": A list of existing file paths that need to be changed. Provide a "reason_for_change" for each.
+    **CRITICAL & UNBREAKABLE LAWS OF MODIFICATION**
 
-    **JSON OUTPUT FORMAT:**
-    ```json
-    {
-      "files_to_create": [
-        {"file": "path/to/new_file.py", "purpose": "A brief reason for creating this file."}
-      ],
-      "files_to_modify": [
-        {"file": "path/to/existing_file.py", "reason_for_change": "A brief reason for modifying this file."}
-      ]
-    }
-    ```
-    """)
+    **LAW #1: ADHERE TO THE S-TIER ENGINEERING PROTOCOL.**
+    All new or modified code must be robust, modern, and maintainable.
+    {S_TIER_ENGINEERING_PROTOCOL}
 
+    **LAW #2: MAINTAIN CONSISTENCY.**
+    The new code must seamlessly integrate with the existing code's style, architecture, and logic.
 
-MODIFICATION_CODER_PROMPT = textwrap.dedent("""
-    You are an S-Tier Python programmer specializing in surgical code modification. You will be given the original code for a single file and a reason for the change. Your task is to provide a precise set of edits to implement the change.
-
-    **REASON FOR CHANGE:**
-    "{{reason_for_change}}"
-
-    **ORIGINAL CODE for `{{target_file}}`:**
-    ```python
-    {{original_code}}
-    ```
-    ---
-    **CRITICAL TASK: PROVIDE SURGICAL EDITS**
-    - Analyze the original code and the reason for change.
-    - Determine the exact code blocks that need to be replaced.
+    **LAW #3: PRODUCE A COMPLETE JSON RESPONSE.**
     - Your entire response MUST be a single JSON object.
-    - The JSON object must have a single key: "edits".
-    - The value of "edits" MUST be a list of objects, where each object represents one surgical change and has four keys:
-        1. "description" (string): A very brief, human-readable comment for the change (e.g., "Add import for history feature.").
-        2. "start_line" (integer): The **1-based** starting line number of the code to be replaced.
-        3. "end_line" (integer): The **1-based** ending line number of the code to be replaced (inclusive).
-        4. "replacement_code" (string): The new code that will replace the specified lines.
+    - The keys of the JSON object MUST be the full, relative file paths of the files you have modified.
+    - The values of the JSON object MUST be the complete, rewritten source code for those files.
+    - Only include files that you have modified in your output. Do not include unchanged files.
+    - Ensure all code is provided as a valid JSON string (e.g., newlines escaped as `\\n`).
+
+    {JSON_OUTPUT_RULE}
 
     **EXAMPLE OUTPUT:**
     ```json
-    {
-      "edits": [
-        {
-          "description": "Add new import for exponentiation.",
-          "start_line": 3,
-          "end_line": 3,
-          "replacement_code": "from math import pow"
-        },
-        {
-          "description": "Add exponentiation to the calculate function.",
-          "start_line": 25,
-          "end_line": 28,
-          "replacement_code": "    elif operator == '**':\\n        return pow(a, b)"
-        }
-      ]
-    }
+    {{{{
+      "src/calculator/cli.py": "#!/usr/bin/env python\\n# src/calculator/cli.py\\n\\nimport argparse\\nfrom .operations import add, subtract, multiply, divide, power\\n\\ndef run_calculator():\\n    # ... (rest of the rewritten file) ...",
+      "src/calculator/operations.py": "# src/calculator/operations.py\\n\\ndef add(a, b):\\n    return a + b\\n\\ndef subtract(a, b):\\n    return a - b\\n\\ndef multiply(a, b):\\n    return a * b\\n\\ndef divide(a, b):\\n    # ... (rest of the rewritten file including new power function) ..."
+    }}}}
     ```
+
+    Execute your mission. Analyze the request and provide the JSON object containing the rewritten files.
     """)

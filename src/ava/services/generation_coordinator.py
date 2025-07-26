@@ -1,13 +1,13 @@
 # src/ava/services/generation_coordinator.py
 import asyncio
+import difflib
 import json
 from typing import Dict, Any, Optional, List
 
 from src.ava.core.event_bus import EventBus
-# The import line should now work perfectly!
 from src.ava.prompts import (
     PLANNER_PROMPT, CODER_PROMPT,
-    MODIFICATION_PLANNER_PROMPT, MODIFICATION_CODER_PROMPT
+    MODIFICATION_REWRITER_PROMPT
 )
 from src.ava.services.base_generation_service import BaseGenerationService
 from src.ava.services.response_validator_service import ResponseValidatorService
@@ -134,89 +134,104 @@ class GenerationCoordinator(BaseGenerationService):
 
     async def _run_modification_workflow(self, existing_files: Dict[str, str], user_request: str) -> Optional[
         Dict[str, str]]:
-        self.log("info", "--- Starting Modification Workflow ---")
+        self.log("info", "--- Starting Rewrite-and-Diff Modification Workflow ---")
 
-        # Phase 1: Create the Surgical Plan
-        self.event_bus.emit("agent_status_changed", "Surgeon", "Planning modifications...", "fa5s.tasks")
-        planner_prompt = MODIFICATION_PLANNER_PROMPT.format(
+        # Phase 1: Call the Rewriter Agent
+        self.event_bus.emit("agent_status_changed", "Rewriter", "Analyzing and rewriting files...", "fa5s.edit")
+
+        rewriter_prompt = MODIFICATION_REWRITER_PROMPT.format(
             user_request=user_request,
-            existing_files_json=json.dumps(list(existing_files.keys()), indent=2)
+            existing_files_json=json.dumps(existing_files, indent=2)
         )
-        plan_response = await self._call_llm_agent(planner_prompt, "architect")
-        surgical_plan = self.validator.extract_and_parse_json(plan_response)
 
-        if not surgical_plan:
-            self.log("error", "Surgical Planner failed to produce a valid plan.")
+        # Using 'architect' role as this is a high-level, multi-file reasoning task.
+        rewriter_response = await self._call_llm_agent(rewriter_prompt, "architect")
+
+        if not rewriter_response or not rewriter_response.strip():
+            self.log("error", "Rewriter agent returned an empty response. Aborting modification.")
             self.event_bus.emit("ai_workflow_finished")
-            return None
+            return existing_files  # Return original files on failure
 
-        files_to_modify = surgical_plan.get("files_to_modify", [])
-        files_to_create = surgical_plan.get("files_to_create", [])
+        rewritten_files = self.validator.extract_and_parse_json(rewriter_response)
 
-        modified_code = existing_files.copy()
+        if not isinstance(rewritten_files, dict):
+            self.log("error",
+                     f"Rewriter agent failed to return a valid JSON dictionary of files. Response: {rewriter_response[:300]}")
+            self.event_bus.emit("ai_workflow_finished")
+            return existing_files
 
-        # Phase 2: Create new files (if any)
-        for item in files_to_create:
-            # This part is simplified for now. We can use the creation workflow later.
-            target_file = item.get('file')
-            self.log("info", f"Surgeon needs to create new file: {target_file}")
-            modified_code[target_file] = f"# New file for: {item.get('purpose')}\n"
-            self.event_bus.emit("file_content_updated", target_file, modified_code[target_file])
+        if not rewritten_files:
+            self.log("warning", "Rewriter agent returned no files to modify. Assuming no changes were needed.")
+            self.event_bus.emit("ai_workflow_finished")
+            return existing_files
 
-        # Phase 3: Modify existing files
-        for item in files_to_modify:
-            target_file = item.get("file")
-            reason = item.get("reason_for_change")
-            if not target_file or target_file not in existing_files:
+        self.log("success", f"Rewriter agent has provided new versions for {len(rewritten_files)} file(s).")
+
+        final_code = existing_files.copy()
+
+        # Phase 2: Animate and Apply Changes for each file
+        for filename, new_content in rewritten_files.items():
+            if filename not in existing_files:
+                self.log("info", f"Creating new file as part of modification: {filename}")
+                self.event_bus.emit("file_content_updated", filename, "")  # Create empty tab
+                self.event_bus.emit("stream_text_at_cursor", filename, new_content)
+                self.event_bus.emit("finalize_editor_content", filename)
+                final_code[filename] = new_content
+                await asyncio.sleep(1.0)  # Pause to see new file
                 continue
 
-            self.log("info", f"Surgeon is operating on: {target_file}")
-            self.event_bus.emit("agent_status_changed", "Surgeon", f"Modifying {target_file}...", "fa5s.cut")
+            original_content = existing_files[filename]
+            if original_content == new_content:
+                self.log("info", f"File '{filename}' was returned by AI but has no changes. Skipping.")
+                continue
 
-            coder_prompt = MODIFICATION_CODER_PROMPT.format(
-                reason_for_change=reason,
-                target_file=target_file,
-                original_code=existing_files[target_file]
-            )
-
-            edits_response = await self._call_llm_agent(coder_prompt, "coder")
-            edits_json = self.validator.extract_and_parse_json(edits_response)
-
-            if edits_json and (edits := edits_json.get("edits")):
-                modified_code[target_file] = await self._apply_animated_edits(
-                    target_file,
-                    modified_code[target_file],
-                    edits
-                )
+            self.log("info", f"Applying diff animation for '{filename}'")
+            await self._apply_diff_animation(filename, original_content, new_content)
+            final_code[filename] = new_content
 
         self.log("success", "✅ Modification Workflow Finished Successfully.")
         self.event_bus.emit("ai_workflow_finished")
-        return modified_code
+        return final_code
 
-    async def _apply_animated_edits(self, filename: str, original_content: str, edits: List[Dict]) -> str:
-        """Applies a list of edits to a file's content with UI animations."""
-        lines = original_content.splitlines()
-        # Sort edits from bottom to top to avoid line number conflicts
-        edits.sort(key=lambda x: x.get('start_line', 0), reverse=True)
+    async def _apply_diff_animation(self, filename: str, original_content: str, new_content: str):
+        """Applies changes for a single file using diff and UI animations."""
+        original_lines = original_content.splitlines()
+        new_lines = new_content.splitlines()
 
-        for edit in edits:
-            start = edit.get("start_line")
-            end = edit.get("end_line")
-            replacement = edit.get("replacement_code")
+        matcher = difflib.SequenceMatcher(None, original_lines, new_lines, autojunk=False)
 
-            if not all([start, end, replacement is not None]):
+        # We must process changes from bottom to top to keep line numbers valid.
+        for tag, i1, i2, j1, j2 in reversed(matcher.get_opcodes()):
+            if tag == 'equal':
                 continue
 
-            # UI Animation
-            self.event_bus.emit("highlight_lines_for_edit", filename, start, end)
-            await asyncio.sleep(1.0)  # Pause for user to see
+            # Small delay between each animated change
+            await asyncio.sleep(0.2)
 
-            # Apply the change to the lines list
-            # Line numbers are 1-based, list indices are 0-based
-            lines[start - 1: end] = replacement.splitlines()
+            if tag == 'replace':
+                self.event_bus.emit("highlight_lines_for_edit", filename, i1 + 1, i2)
+                await asyncio.sleep(1.2)
+                self.event_bus.emit("delete_highlighted_lines", filename)
+                await asyncio.sleep(0.5)
+                replacement_text = "\n".join(new_lines[j1:j2])
+                self.event_bus.emit("stream_text_at_cursor", filename, replacement_text)
+                await asyncio.sleep(0.8)
 
-            # Update the UI with the *current* state of the file
-            self.event_bus.emit("file_content_updated", filename, "\n".join(lines))
-            await asyncio.sleep(0.5)
+            elif tag == 'delete':
+                self.event_bus.emit("highlight_lines_for_edit", filename, i1 + 1, i2)
+                await asyncio.sleep(1.2)
+                self.event_bus.emit("delete_highlighted_lines", filename)
+                await asyncio.sleep(0.5)
 
-        return "\n".join(lines)
+            elif tag == 'insert':
+                # For insert, i1 and i2 will be the same. We insert *before* this line.
+                self.event_bus.emit("position_cursor", filename, i1 + 1, 0)
+                await asyncio.sleep(0.5)
+                insertion_text = "\n".join(new_lines[j1:j2]) + '\n'
+                self.event_bus.emit("stream_text_at_cursor", filename, insertion_text)
+                await asyncio.sleep(0.8)
+
+        # After all animations are done for a file, do a final content sync
+        # to correct any minor animation artifacts and mark the file as clean.
+        self.event_bus.emit("file_content_updated", filename, new_content)
+        self.event_bus.emit("finalize_editor_content", filename)

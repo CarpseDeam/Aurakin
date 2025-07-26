@@ -160,10 +160,12 @@ class ServiceManager:
         server_script_base_dir = self.project_root / "ava"
         llm_script_path = server_script_base_dir / "llm_server.py"
         rag_script_path = server_script_base_dir / "rag_server.py"
-        lsp_subprocess_log_file = log_dir_for_servers / "lsp_server_subprocess.log"
 
-        llm_subprocess_log_file = log_dir_for_servers / "llm_server_subprocess.log"
-        rag_subprocess_log_file = log_dir_for_servers / "rag_server_subprocess.log"
+        # --- DEV TOGGLE: Comment out these lines to disable log file creation ---
+        # lsp_subprocess_log_file = log_dir_for_servers / "lsp_server_subprocess.log"
+        # llm_subprocess_log_file = log_dir_for_servers / "llm_server_subprocess.log"
+        # rag_subprocess_log_file = log_dir_for_servers / "rag_server_subprocess.log"
+        # --- END TOGGLE ---
 
         startupinfo = None
         if sys.platform == "win32" and not python_executable_to_use.endswith("pythonw.exe"):
@@ -178,13 +180,27 @@ class ServiceManager:
 
         self.log_to_event_bus("info", "Attempting to launch LLM server...")
         try:
-            with open(llm_subprocess_log_file, "w", encoding="utf-8") as llm_log_handle:
-                llm_proc = subprocess.Popen(
-                    [python_executable_to_use, str(llm_script_path)], cwd=str(cwd_for_servers),
-                    stdout=llm_log_handle, stderr=subprocess.STDOUT,
-                    startupinfo=startupinfo,
-                    env=env
-                )
+            # --- DEV TOGGLE: LOGS DISABLED ---
+            # To re-enable, comment out this block and uncomment the one below.
+            llm_proc = subprocess.Popen(
+                [python_executable_to_use, str(llm_script_path)], cwd=str(cwd_for_servers),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo,
+                env=env
+            )
+            # --- END DISABLED BLOCK ---
+
+            # --- DEV TOGGLE: LOGS ENABLED ---
+            # To enable, uncomment this block and comment out the one above.
+            # with open(llm_subprocess_log_file, "w", encoding="utf-8") as llm_log_handle:
+            #     llm_proc = subprocess.Popen(
+            #         [python_executable_to_use, str(llm_script_path)], cwd=str(cwd_for_servers),
+            #         stdout=llm_log_handle, stderr=subprocess.STDOUT,
+            #         startupinfo=startupinfo,
+            #         env=env
+            #     )
+            # --- END ENABLED BLOCK ---
+
             process_manager.register(llm_proc, "LLM Server")
             pid = llm_proc.pid if llm_proc else 'N/A'
             self.log_to_event_bus("info", f"LLM Server process started with PID: {pid}")
@@ -193,13 +209,25 @@ class ServiceManager:
 
         self.log_to_event_bus("info", "Attempting to launch RAG server...")
         try:
-            with open(rag_subprocess_log_file, "w", encoding="utf-8") as rag_log_handle:
-                rag_proc = subprocess.Popen(
-                    [python_executable_to_use, str(rag_script_path)], cwd=str(cwd_for_servers),
-                    stdout=rag_log_handle, stderr=subprocess.STDOUT,
-                    startupinfo=startupinfo,
-                    env=env
-                )
+            # --- DEV TOGGLE: LOGS DISABLED ---
+            rag_proc = subprocess.Popen(
+                [python_executable_to_use, str(rag_script_path)], cwd=str(cwd_for_servers),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo,
+                env=env
+            )
+            # --- END DISABLED BLOCK ---
+
+            # --- DEV TOGGLE: LOGS ENABLED ---
+            # with open(rag_subprocess_log_file, "w", encoding="utf-8") as rag_log_handle:
+            #     rag_proc = subprocess.Popen(
+            #         [python_executable_to_use, str(rag_script_path)], cwd=str(cwd_for_servers),
+            #         stdout=rag_log_handle, stderr=subprocess.STDOUT,
+            #         startupinfo=startupinfo,
+            #         env=env
+            #     )
+            # --- END ENABLED BLOCK ---
+
             process_manager.register(rag_proc, "RAG Server")
             pid = rag_proc.pid if rag_proc else 'N/A'
             self.log_to_event_bus("info", f"RAG Server process started with PID: {pid}")
@@ -209,13 +237,25 @@ class ServiceManager:
         self.log_to_event_bus("info", "Attempting to launch Python LSP server...")
         lsp_command = [python_executable_to_use, "-m", "pylsp", "--tcp", "--port", "8003"]
         try:
-            with open(lsp_subprocess_log_file, "w", encoding="utf-8") as lsp_log_handle:
-                lsp_proc = subprocess.Popen(
-                    lsp_command, cwd=str(cwd_for_servers),
-                    stdout=lsp_log_handle, stderr=subprocess.STDOUT,
-                    startupinfo=startupinfo,
-                    env=env
-                )
+            # --- DEV TOGGLE: LOGS DISABLED ---
+            lsp_proc = subprocess.Popen(
+                lsp_command, cwd=str(cwd_for_servers),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                startupinfo=startupinfo,
+                env=env
+            )
+            # --- END DISABLED BLOCK ---
+
+            # --- DEV TOGGLE: LOGS ENABLED ---
+            # with open(lsp_subprocess_log_file, "w", encoding="utf-8") as lsp_log_handle:
+            #     lsp_proc = subprocess.Popen(
+            #         lsp_command, cwd=str(cwd_for_servers),
+            #         stdout=lsp_log_handle, stderr=subprocess.STDOUT,
+            #         startupinfo=startupinfo,
+            #         env=env
+            #     )
+            # --- END ENABLED BLOCK ---
+
             process_manager.register(lsp_proc, "Python LSP Server")
             pid = lsp_proc.pid if lsp_proc else 'N/A'
             self.log_to_event_bus("info", f"LSP Server process started with PID: {pid}")
