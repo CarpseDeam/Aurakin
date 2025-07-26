@@ -9,7 +9,7 @@ from pathlib import Path
 from src.ava.core.app_state import AppState
 from src.ava.core.event_bus import EventBus
 from src.ava.core.interaction_mode import InteractionMode
-from src.ava.prompts import HEALER_PROMPT
+from src.ava.prompts import TEST_HEALER_PROMPT, RUNTIME_HEALER_PROMPT
 
 if TYPE_CHECKING:
     from src.ava.core.managers.service_manager import ServiceManager
@@ -41,7 +41,8 @@ class WorkflowManager:
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
         self.event_bus.subscribe("workflow_finalized", self._on_workflow_finalized)
         self.event_bus.subscribe("unit_test_generation_requested", self.handle_test_generation_request)
-        self.event_bus.subscribe("heal_project_requested", self.handle_heal_request)
+        self.event_bus.subscribe("heal_project_with_tests_requested", self.handle_test_heal_request)
+        self.event_bus.subscribe("run_program_and_heal_requested", self.handle_run_and_heal_request)
 
     def _on_workflow_finalized(self, final_code: Dict[str, str]):
         self._last_generated_code = final_code
@@ -145,7 +146,6 @@ class WorkflowManager:
 
         relative_source_path = source_file_path.relative_to(project_manager.active_project_path).as_posix()
 
-        # This will now return a dictionary with the test code and requirements
         generated_assets = await test_generation_service.generate_test_for_function(
             function_name, function_code, relative_source_path
         )
@@ -158,7 +158,6 @@ class WorkflowManager:
         test_content = generated_assets["test_code"]
         requirements_content = generated_assets.get("requirements")
 
-        # Determine the path for the new test file
         source_filename = source_file_path.name
         test_filename = f"test_{source_filename}"
         test_file_rel_path = f"tests/{test_filename}"
@@ -170,88 +169,81 @@ class WorkflowManager:
 
         if project_manager.git_manager:
             project_manager.git_manager.stage_file(test_file_rel_path)
-
-            # Write and stage requirements.txt if content is available
             if requirements_content:
                 req_path = project_manager.active_project_path / "requirements.txt"
                 req_path.write_text(requirements_content, encoding='utf-8')
                 project_manager.git_manager.stage_file("requirements.txt")
-
             project_manager.git_manager.commit_staged_files(f"feat: Add unit tests for {function_name}")
 
         self.event_bus.emit("file_content_updated", test_file_rel_path, test_content)
         self.event_bus.emit("test_file_generated", test_file_rel_path)
         self.event_bus.emit("ai_workflow_finished")
 
-    def handle_heal_request(self):
-        """Handles the 'Run Tests & Heal' request from the UI."""
-        self.log("info", "Heal request received. Starting Heal workflow.")
-        self.task_manager.start_ai_workflow_task(self._run_heal_workflow())
+    def handle_test_heal_request(self):
+        self.log("info", "Test-based Heal request received. Starting Heal workflow.")
+        self.task_manager.start_ai_workflow_task(self._run_test_heal_workflow())
 
-    async def _run_heal_workflow(self):
-        """The core logic for the self-healing workflow."""
-        execution_service = self.service_manager.get_execution_service()
-        project_manager = self.service_manager.get_project_manager()
-        llm_client = self.service_manager.get_llm_client()
-
-        from src.ava.services import ResponseValidatorService
-        validator = ResponseValidatorService()
-
-        if not all([execution_service, project_manager, llm_client]):
-            self.log("error", "Heal workflow cannot run: missing core services.")
-            return
-
+    async def _run_test_heal_workflow(self):
         self.event_bus.emit("agent_status_changed", "Healer", "Running project tests...", "fa5s.vial")
-
-        exit_code, test_output = await execution_service.execute_and_capture("pytest")
-
+        exit_code, test_output = await self.service_manager.get_execution_service().execute_and_capture("pytest")
         if exit_code == 0:
             self.log("success", "All tests passed! No healing needed.")
             self.event_bus.emit("agent_status_changed", "Healer", "All tests passed!", "fa5s.check-circle")
-            self.event_bus.emit("ai_workflow_finished")
             return
+        await self._run_generic_heal_workflow(TEST_HEALER_PROMPT, {"test_output": test_output})
 
-        self.log("warning", "Tests failed. Engaging Healer Agent.")
-        self.event_bus.emit("agent_status_changed", "Healer", "Tests failed, attempting to fix...", "fa5s.heartbeat")
+    def handle_run_and_heal_request(self, command: str):
+        self.log("info", f"Run & Heal request received for command: '{command}'")
+        self.task_manager.start_ai_workflow_task(self._run_program_and_heal_workflow(command))
+
+    async def _run_program_and_heal_workflow(self, command: str):
+        self.event_bus.emit("agent_status_changed", "Executor", f"Running '{command}'...", "fa5s.play")
+        exit_code, runtime_output = await self.service_manager.get_execution_service().execute_and_capture(command)
+        if exit_code == 0:
+            self.log("success", "Program ran successfully! No healing needed.")
+            self.event_bus.emit("agent_status_changed", "Executor", "Run successful!", "fa5s.check-circle")
+            return
+        await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, {"runtime_traceback": runtime_output})
+
+    async def _run_generic_heal_workflow(self, prompt_template: str, context: Dict[str, str]):
+        """The core logic for any self-healing workflow."""
+        self.log("warning", "A failure was detected. Engaging Healer Agent.")
+        self.event_bus.emit("agent_status_changed", "Healer", "Failure detected, attempting to fix...",
+                            "fa5s.heartbeat")
+
+        project_manager = self.service_manager.get_project_manager()
+        llm_client = self.service_manager.get_llm_client()
+        from src.ava.services import ResponseValidatorService
+        validator = ResponseValidatorService()
 
         existing_files = project_manager.get_project_files()
-        healer_prompt = HEALER_PROMPT.format(
-            user_request=self._last_user_request or "The user's last request was to fix test failures.",
-            test_output=test_output,
-            existing_files_json=json.dumps(existing_files, indent=2)
-        )
+        prompt_context = {
+            "user_request": self._last_user_request or "The user's last request was to fix a failure.",
+            "existing_files_json": json.dumps(existing_files, indent=2),
+            **context
+        }
+        healer_prompt = prompt_template.format(**prompt_context)
 
-        # --- THE FIX for TypeError ---
-        # Get the async generator first
         healer_response_stream = llm_client.stream_chat(
-            *llm_client.get_model_for_role("architect"),
-            healer_prompt, "healer"
+            *llm_client.get_model_for_role("architect"), healer_prompt, "healer"
         )
 
-        # Then iterate over it with async for
-        full_healer_response = ""
-        async for chunk in healer_response_stream:
-            full_healer_response += chunk
-        # --- END OF FIX ---
+        full_healer_response = "".join([chunk async for chunk in healer_response_stream])
 
         if not full_healer_response:
             self.log("error", "Healer agent returned an empty response. Aborting fix.")
-            self.event_bus.emit("ai_workflow_finished")
             return
 
         rewritten_files = validator.extract_and_parse_json(full_healer_response)
-
         if not isinstance(rewritten_files, dict) or not rewritten_files:
-            self.log("error", f"Healer agent failed to return a valid JSON fix. Response: {full_healer_response[:300]}")
-            self.event_bus.emit("ai_workflow_finished")
+            self.log("error", f"Healer failed to return a valid JSON fix. Response: {full_healer_response[:300]}")
             return
 
-        self.log("success", f"Healer agent has provided a fix for {len(rewritten_files)} file(s). Applying changes...")
-
+        self.log("success", f"Healer has provided a fix for {len(rewritten_files)} file(s). Applying changes...")
         final_code = existing_files.copy()
         for filename, new_content in rewritten_files.items():
             if filename not in final_code:
-                self.log("warning", f"Healer tried to modify a non-existent file: {filename}. Skipping.")
+                self.log("warning", f"Healer tried to modify non-existent file: {filename}. Skipping.")
                 continue
 
             if project_manager.active_project_path:
@@ -270,11 +262,10 @@ class WorkflowManager:
 
         if project_manager.git_manager:
             project_manager.git_manager.write_and_stage_files(rewritten_files)
-            project_manager.git_manager.commit_staged_files("fix: AI Healer applied fix for test failures")
+            project_manager.git_manager.commit_staged_files("fix: AI Healer applied automated fix")
 
         self.event_bus.emit("workflow_finalized", final_code)
-        self.log("success", "✅ Healer workflow finished. Please review the fix and run tests again.")
-        self.event_bus.emit("ai_workflow_finished")
+        self.log("success", "✅ Healer workflow finished. Please review the fix and run again.")
 
     def log(self, level: str, message: str, **kwargs):
         self.event_bus.emit("log_message_received", "WorkflowManager", level, message, **kwargs)

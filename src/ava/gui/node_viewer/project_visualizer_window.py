@@ -99,26 +99,39 @@ class ProjectVisualizerWindow(QMainWindow):
         return _normalize_path_key(item.path) == _normalize_path_key(str(self.project_manager.active_project_path))
 
     def _show_context_menu(self, pos):
-        """Show context menu for generating tests on function nodes."""
+        """Show context menu for running programs, generating tests, and healing."""
         item = self.view.itemAt(pos)
-        if not isinstance(item, ProjectNode):
+        if not isinstance(item, ProjectNode) or not self.project_manager.active_project_path:
             return
 
         menu = QMenu(self.view)
 
+        # Action: Run Program
+        if item.node_type == 'file' and item.name.endswith('.py'):
+            rel_path = Path(item.path).relative_to(self.project_manager.active_project_path).as_posix()
+            command_to_run = f"python {rel_path}"
+            action = menu.addAction(f"▶️ Run Program")
+            action.triggered.connect(
+                lambda checked=False, cmd=command_to_run: self.event_bus.emit("run_program_and_heal_requested", cmd)
+            )
+
+        # Action: Generate Unit Tests
         if item.node_type == 'function':
             action = menu.addAction(f"Generate Unit Tests for {item.name}()")
             action.triggered.connect(lambda: self._request_unit_test_generation(item))
 
+        # Action: Run Tests & Heal (from root)
         if self._is_root_node(item):
             menu.addSeparator()
             heal_action = menu.addAction("🧪 Run Tests & Heal")
             heal_action.triggered.connect(
                 lambda: self.event_bus.emit("heal_project_requested")
             )
-            menu.addSeparator()
 
         if not menu.isEmpty():
+            # Cleanup trailing separator if it exists
+            if menu.actions() and menu.actions()[-1].isSeparator():
+                menu.removeAction(menu.actions()[-1])
             menu.exec(self.view.mapToGlobal(pos))
 
     def _request_unit_test_generation(self, node: ProjectNode):
