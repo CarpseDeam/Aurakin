@@ -30,18 +30,24 @@ ARCHITECT_DESIGN_PROTOCOL = textwrap.dedent("""
         -   **Comprehensive Docstrings:** Every module, class, and public function MUST have a comprehensive, Google-style docstring. Module docstrings describe the file's purpose. Function/method docstrings must describe the purpose, `Args:`, and `Returns:`.
 """)
 
-# --- NEW: CODER'S PROTOCOL (Implementation & Robustness) ---
+# --- UPDATED: CODER'S PROTOCOL (Now includes ELEGANCE) ---
 S_TIER_ENGINEERING_PROTOCOL = textwrap.dedent("""
     **LAW: S-TIER ENGINEERING PROTOCOL - YOU MUST ADHERE TO THESE AT ALL TIMES.**
 
     1.  **ROBUSTNESS & ERROR HANDLING:**
-        -   **NEVER trust external inputs or resources.** Aggressively use `try...except` blocks for file operations (`FileNotFoundError`, `IOError`), network requests (`requests.exceptions.RequestException`), and dictionary key access (`KeyError`).
-        -   **Configuration Management:** For API keys, database URLs, or other secrets, your code should read from environment variables using `os.getenv('MY_VARIABLE')`. Never hardcode secrets.
+        -   **NEVER trust external inputs or resources.** Aggressively use `try...except` blocks for file operations (`FileNotFoundError`, `IOError`), network requests, and dictionary key access (`KeyError`).
+        -   **Configuration Management:** For API keys or secrets, your code should read from environment variables using `os.getenv('MY_VARIABLE')`. Never hardcode secrets.
         -   **Graceful Failure:** Your code should anticipate potential failures and handle them gracefully, logging errors instead of crashing.
 
     2.  **MODERN & EFFICIENT PYTHON:**
-        -   **Always prefer `pathlib.Path` over `os.path`** for all file system operations. It is cleaner and object-oriented.
-        -   **Use Dataclasses:** For simple data-holding objects, always prefer `@dataclass` for its conciseness and power.
-        -   **Use F-strings:** All string formatting must use f-strings (e.g., `f"Hello, {{name}}"`).
+        -   **Always prefer `pathlib.Path` over `os.path`** for all file system operations.
+        -   **Use Dataclasses:** For simple data-holding objects, always prefer `@dataclass`.
+        -   **Use F-strings:** All string formatting must use f-strings.
         -   **Dependency Management:** All external libraries MUST be listed in a `requirements.txt` file.
+
+    3.  **CODE ELEGANCE & PYTHONIC STYLE:**
+        -   **Minimalist Logic:** Strive for the clearest and most direct implementation. A simple loop is better than a complex, "clever" one-liner.
+        -   **Context Managers:** Always use the `with` statement for resources like files or network connections.
+        -   **Data-Driven Logic:** For mapping choices to actions (like calculator operations), prefer a dictionary lookup over a long `if/elif/else` chain.
+        -   **Clarity over Brevity:** Write code that is easy for a human to read and understand.
 """)

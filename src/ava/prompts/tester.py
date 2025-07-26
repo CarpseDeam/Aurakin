@@ -44,7 +44,8 @@ TESTER_PROMPT = textwrap.dedent(f"""
     def test_{{function_name}}_error_handling():
         # ... implementation for an invalid input scenario ...
         # with pytest.raises(ValueError):
-        #     {{function_name}}(...)
+        -        #     {{function_name}}(...)
++        #     {{function_name}}(...)
     ```
 
     Execute your mission. Write the complete pytest file for the function `{{function_name}}` now.
