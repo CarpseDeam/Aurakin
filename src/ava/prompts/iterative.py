@@ -77,6 +77,7 @@ CODER_PROMPT = textwrap.dedent(f"""
 
     - **File to Generate:** `{{target_file}}`
     - **Purpose:** `{{purpose}}`
+    - **Public Members to Implement:** `{{public_members}}`
 
     ---
     **PROJECT CONTEXT (Your Team's Plan)**
@@ -88,11 +89,15 @@ CODER_PROMPT = textwrap.dedent(f"""
     ---
     **CRITICAL & UNBREAKABLE LAWS OF CODING**
 
-    **LAW #1: ADHERE TO THE S-TIER ENGINEERING PROTOCOL.**
+    **LAW #1: STRICTLY ADHERE TO THE ASSIGNMENT (NEW LAW).**
+    - You MUST implement all functions and classes listed in the "Public Members to Implement" section above.
+    - The names of these functions/classes MUST EXACTLY match the names specified in the plan. DO NOT rename them.
+
+    **LAW #2: ADHERE TO THE S-TIER ENGINEERING PROTOCOL.**
     You must write robust, modern, and maintainable Python code.
     {S_TIER_ENGINEERING_PROTOCOL}
 
-    **LAW #2: WRITE THE FULL FILE CONTENT.**
+    **LAW #3: WRITE THE FULL FILE CONTENT.**
     - Your entire response MUST be only the raw code for the assigned file.
     - You MUST include all necessary imports, function definitions, classes, and logic.
     - All imports MUST be absolute from the project's source root.

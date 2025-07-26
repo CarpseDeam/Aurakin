@@ -61,6 +61,7 @@ class GenerationCoordinator(BaseGenerationService):
         for i, contract_item in enumerate(interface_contract):
             target_file = contract_item.get("file")
             purpose = contract_item.get("purpose", "No purpose defined.")
+            public_members = contract_item.get("public_members", [])  # <-- NEW
             if not target_file:
                 continue
 
@@ -104,7 +105,8 @@ class GenerationCoordinator(BaseGenerationService):
                     user_request=user_request,
                     target_file=target_file,
                     purpose=purpose,
-                    interface_context=interface_context
+                    interface_context=interface_context,
+                    public_members=public_members  # <-- NEW
                 )
 
                 full_streamed_content = ""

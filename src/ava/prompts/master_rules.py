@@ -16,7 +16,7 @@ RAW_CODE_OUTPUT_RULE = """
 - Do not write any explanations, comments, or markdown before or after the code.
 """
 
-# --- NEW: ARCHITECT'S PROTOCOL (Design & Structure) ---
+# --- UPDATED: ARCHITECT'S PROTOCOL (Design & Structure) ---
 ARCHITECT_DESIGN_PROTOCOL = textwrap.dedent("""
     **LAW: ARCHITECTURAL DESIGN PROTOCOL - YOU MUST ADHERE TO THESE AT ALL TIMES.**
 
@@ -28,6 +28,10 @@ ARCHITECT_DESIGN_PROTOCOL = textwrap.dedent("""
     2.  **PROFESSIONAL SIGNATURES:**
         -   **Mandatory Type Hinting:** All function and method signatures MUST include type hints for all arguments and for the return value. Use the `typing` module where necessary.
         -   **Comprehensive Docstrings:** Every module, class, and public function MUST have a comprehensive, Google-style docstring. Module docstrings describe the file's purpose. Function/method docstrings must describe the purpose, `Args:`, and `Returns:`.
+
+    3.  **SINGLE PATH OF EXECUTION (NEW LAW):**
+        -   When defining interfaces, provide only ONE primary function for a given task.
+        -   AVOID creating redundant public members. For example, in a calculator, plan for EITHER individual functions (`add`, `subtract`) OR a single `calculate` function, but NEVER both. Choose the simplest path that achieves the goal.
 """)
 
 # --- UPDATED: CODER'S PROTOCOL (Now includes ELEGANCE) ---
