@@ -90,28 +90,32 @@ class GenerationCoordinator(BaseGenerationService):
                                 f"Writing {target_file} ({i + 1}/{len(files_to_create)})...", "fa5s.code")
             self.event_bus.emit("file_content_updated", target_file, "")
 
-            context_blocks = []
-            for other_item in interface_contract:
-                if other_item.get('file') == target_file or not other_item.get('public_members'):
-                    continue
-                members_str = "\n".join([f"    # {sig}" for sig in other_item['public_members']])
-                context_blocks.append(f"  # From {other_item.get('file')}:\n{members_str}")
-            interface_context = "class ProjectInterfaces:\n" + "\n\n".join(
-                context_blocks) if context_blocks else "# No other interfaces defined."
-
             file_content = ""
             made_api_call = False
-            if target_file == '.gitignore':
+            # --- NEW: Foolproof handling for requirements.txt and other boilerplate ---
+            if target_file == 'requirements.txt':
+                file_content = "pytest\n"
+                self.event_bus.emit("stream_text_at_cursor", target_file, file_content)
+            elif target_file == '.gitignore':
                 file_content = "# Kintsugi AvA Default Ignore\n.venv/\nvenv/\n__pycache__/\n*.py[co]\nrag_db/\n.env\n*.log\n"
                 self.event_bus.emit("stream_text_at_cursor", target_file, file_content)
             elif target_file.endswith('__init__.py'):
-                file_content = ""
+                file_content = "" # Blank file, no stream needed
             else:
                 made_api_call = True
                 if self.project_manager and self.project_manager.active_project_path:
                     abs_path_str = str(self.project_manager.active_project_path / target_file)
                     self.event_bus.emit("agent_activity_started", "Coder", abs_path_str)
                 await asyncio.sleep(0.1)
+
+                context_blocks = []
+                for other_item in interface_contract:
+                    if other_item.get('file') == target_file or not other_item.get('public_members'):
+                        continue
+                    members_str = "\n".join([f"    # {sig}" for sig in other_item['public_members']])
+                    context_blocks.append(f"  # From {other_item.get('file')}:\n{members_str}")
+                interface_context = "class ProjectInterfaces:\n" + "\n\n".join(
+                    context_blocks) if context_blocks else "# No other interfaces defined."
 
                 coder_prompt = CODER_PROMPT.format(
                     user_request=user_request,
