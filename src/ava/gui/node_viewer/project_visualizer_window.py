@@ -54,8 +54,10 @@ class ZoomableView(QGraphicsView):
 
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        # --- THE SMOOTHNESS FIX: Zoom from the center of the view ---
+        self.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
+        self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
+        # --- END OF FIX ---
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
     def wheelEvent(self, event: QWheelEvent):
@@ -76,7 +78,6 @@ class ProjectVisualizerWindow(QMainWindow):
         self.code_structure_service = CodeStructureService()
         self.nodes: Dict[str, ProjectNode] = {}
         self.connections: List[AnimatedConnection] = []
-        # --- THE FIX (Part 1): Track multiple active connections ---
         self._active_connections: List[AnimatedConnection] = []
         self._animation_group = QParallelAnimationGroup()
 
@@ -91,13 +92,33 @@ class ProjectVisualizerWindow(QMainWindow):
         self.view.customContextMenuRequested.connect(self._show_context_menu)
         self.setCentralWidget(self.view)
 
+    def _is_root_node(self, item: ProjectNode) -> bool:
+        """Checks if the given node is the root project node."""
+        if not self.project_manager.active_project_path:
+            return False
+        return _normalize_path_key(item.path) == _normalize_path_key(str(self.project_manager.active_project_path))
+
     def _show_context_menu(self, pos):
         """Show context menu for generating tests on function nodes."""
         item = self.view.itemAt(pos)
-        if isinstance(item, ProjectNode) and item.node_type == 'function':
-            menu = QMenu(self.view)
+        if not isinstance(item, ProjectNode):
+            return
+
+        menu = QMenu(self.view)
+
+        if item.node_type == 'function':
             action = menu.addAction(f"Generate Unit Tests for {item.name}()")
             action.triggered.connect(lambda: self._request_unit_test_generation(item))
+
+        if self._is_root_node(item):
+            menu.addSeparator()
+            heal_action = menu.addAction("🧪 Run Tests & Heal")
+            heal_action.triggered.connect(
+                lambda: self.event_bus.emit("heal_project_requested")
+            )
+            menu.addSeparator()
+
+        if not menu.isEmpty():
             menu.exec(self.view.mapToGlobal(pos))
 
     def _request_unit_test_generation(self, node: ProjectNode):
@@ -174,7 +195,7 @@ class ProjectVisualizerWindow(QMainWindow):
 
             node = ProjectNode(name, current_path_str, node_type)
             node_key = _normalize_path_key(current_path_str) if node_type in ['file',
-                                                                              'folder'] else f"{_normalize_path_key(current_path_str)}::{name}"
+                                                                             'folder'] else f"{_normalize_path_key(current_path_str)}::{name}"
             self._setup_new_node(node, parent_node, node_key)
 
             structure = children.get('__structure__')
@@ -241,7 +262,7 @@ class ProjectVisualizerWindow(QMainWindow):
 
         def layout_recursively(node: ProjectNode, depth: int):
             node_key = _normalize_path_key(node.path) if node.node_type in ['file',
-                                                                            'folder'] else f"{_normalize_path_key(node.path)}::{node.name}"
+                                                                           'folder'] else f"{_normalize_path_key(node.path)}::{node.name}"
 
             x = depth * COLUMN_WIDTH
             y = y_map[depth] * ROW_HEIGHT
@@ -282,8 +303,10 @@ class ProjectVisualizerWindow(QMainWindow):
 
     def _on_layout_animation_finished(self, fit_view: bool):
         self._update_all_connections()
+        # --- THE ZOOM-OUT FIX: Use a timer to ensure the view is ready ---
         if fit_view:
-            self._fit_view_with_padding()
+            QTimer.singleShot(10, self._fit_view_with_padding)
+        # --- END OF FIX ---
 
     def _update_all_connections(self):
         for conn in self.connections:
@@ -291,12 +314,16 @@ class ProjectVisualizerWindow(QMainWindow):
                 conn.update_path()
 
     def _clear_scene(self) -> None:
+        for conn in self.connections:
+            conn.animation_timer.stop()
+
         self.scene.clear()
         self.nodes.clear()
         self.connections.clear()
         self._active_connections.clear()
 
     def _fit_view_with_padding(self) -> None:
+        """Adjusts the view to show all items with a nice margin."""
         rect = self.scene.itemsBoundingRect()
         if not rect.isValid(): return
         padding = 50
@@ -306,12 +333,10 @@ class ProjectVisualizerWindow(QMainWindow):
     def _find_node_by_path(self, target_path: str) -> Optional[ProjectNode]:
         """Finds a node by its file path, used as the entry point for agent activity."""
         norm_target_path = _normalize_path_key(target_path)
-        # First, try a direct lookup, which is fastest.
         node = self.nodes.get(norm_target_path)
         if node and node.node_type in ["file", "folder"]:
             return node
 
-        # If direct lookup fails (e.g., key includes function name), iterate.
         for node in self.nodes.values():
             if _normalize_path_key(node.path) == norm_target_path and node.node_type in ["file", "folder"]:
                 return node
@@ -319,9 +344,8 @@ class ProjectVisualizerWindow(QMainWindow):
 
     def _handle_agent_activity(self, agent_name: str, target_file_path: str):
         self.log("info", f"Visualizing activity for Agent: {agent_name} on file: {Path(target_file_path).name}")
-        self._deactivate_all_connections()  # Clear previous activity
+        self._deactivate_all_connections()
 
-        # --- THE FIX (Part 2): Full Path Tracing and Auto-Expansion ---
         target_node = self._find_node_by_path(target_file_path)
         if not target_node:
             self.log("warning", f"Could not find a node for target path: {target_file_path}")
@@ -355,8 +379,7 @@ class ProjectVisualizerWindow(QMainWindow):
                 self._active_connections.append(node.incoming_connection)
 
     def _deactivate_all_connections(self, *args, **kwargs):
-        self.log("info", "Workflow finished. Deactivating all visualizer connections.")
-        # --- THE FIX (Part 3): Deactivate all connections in the list ---
+        self.log("info", "Deactivating all visualizer connections.")
         for conn in self._active_connections:
             conn.deactivate()
         self._active_connections.clear()

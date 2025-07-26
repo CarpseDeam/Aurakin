@@ -20,7 +20,10 @@ PLANNER_PROMPT = textwrap.dedent(f"""
     You must design a logical and maintainable file structure.
     {ARCHITECT_DESIGN_PROTOCOL}
 
-    **LAW #2: DESIGN THE INTERFACE CONTRACT.**
+    **LAW #2: CREATE PROPER PYTHON PACKAGES.**
+    For any source directory you create (like 'src', 'src/calculator', etc.), you MUST include an `__init__.py` file within it to ensure it is a valid, importable Python package.
+
+    **LAW #3: DESIGN THE INTERFACE CONTRACT.**
     - Your entire response MUST be a single JSON object.
     - The JSON object must have a single key: `"interface_contract"`.
     - The value MUST be a list of objects, where each object represents a file and contains three keys:
@@ -28,7 +31,7 @@ PLANNER_PROMPT = textwrap.dedent(f"""
         2.  `"purpose"` (string): A brief, one-sentence description of the file's role.
         3.  `"public_members"` (list of strings): The function signatures or class names that other files will need to import and use. For simple files like `__init__.py`, this can be an empty list.
 
-    **LAW #3: DO NOT GENERATE CODE CONTENT.**
+    **LAW #4: DO NOT GENERATE CODE CONTENT.**
     - You are strictly forbidden from generating the implementation code for any file. Your only job is to provide the file plan and the public interface signatures.
 
     {JSON_OUTPUT_RULE}
@@ -38,19 +41,22 @@ PLANNER_PROMPT = textwrap.dedent(f"""
     {{{{
       "interface_contract": [
         {{{{
+          "file": "src/__init__.py",
+          "purpose": "Makes 'src' a Python package.",
+          "public_members": []
+        }}}},
+        {{{{
+          "file": "src/calculator/__init__.py",
+          "purpose": "Makes 'calculator' a Python sub-package.",
+          "public_members": []
+        }}}},
+        {{{{
           "file": "src/calculator/operations.py",
           "purpose": "Contains the core mathematical logic for the calculator.",
           "public_members": [
             "add(a: float, b: float) -> float",
-            "subtract(a: float, b: float) -> float",
-            "multiply(a: float, b: float) -> float",
-            "divide(a: float, b: float) -> float"
+            "subtract(a: float, b: float) -> float"
           ]
-        }}}},
-        {{{{
-          "file": "src/calculator/cli.py",
-          "purpose": "Handles the command-line interface and user input loop.",
-          "public_members": ["run_calculator()"]
         }}}},
         {{{{
           "file": "main.py",

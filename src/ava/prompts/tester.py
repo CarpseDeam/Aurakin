@@ -24,11 +24,18 @@ TESTER_PROMPT = textwrap.dedent(f"""
     - Your response MUST be a single, complete Python file.
     - It MUST start with the necessary imports (e.g., `import pytest`, `from {{module_path}} import {{function_name}}`).
     - It MUST contain exactly two test functions:
-        1.  **A "Happy Path" Test:** A standard test case that verifies the function works as expected with valid inputs. Name it `test_{{function_name}}_happy_path`.
+        1.  A "Happy Path" Test:** A standard test case that verifies the function works as expected with valid inputs. Name it `test_{{function_name}}_happy_path`.
         2.  **An Error-Handling Test:** A functional test that asserts an appropriate exception (e.g., `ValueError`, `TypeError`) is raised when the function receives invalid input. Name it `test_{{function_name}}_error_handling`. Use `pytest.raises` for this.
 
     **LAW #3: DO NOT USE PLACEHOLDERS.**
     - Both test functions must be fully implemented and functional. Do not use `pass`, `...`, or comments like `# TODO`.
+
+    **LAW #4: ENSURE DEPENDENCIES ARE LISTED.**
+    - You MUST also generate a `requirements.txt` file.
+    - This file MUST contain `pytest`.
+    - To do this, after your Python code block, add the following separator and the `requirements.txt` content:
+    ---requirements.txt---
+    pytest
 
     {RAW_CODE_OUTPUT_RULE}
 
@@ -43,9 +50,11 @@ TESTER_PROMPT = textwrap.dedent(f"""
 
     def test_{{function_name}}_error_handling():
         # ... implementation for an invalid input scenario ...
-        # with pytest.raises(ValueError):
-        -        #     {{function_name}}(...)
-+        #     {{function_name}}(...)
+        with pytest.raises(ValueError):
+            {{function_name}}(...)
+    ```
+    ---requirements.txt---
+    pytest
     ```
 
     Execute your mission. Write the complete pytest file for the function `{{function_name}}` now.
