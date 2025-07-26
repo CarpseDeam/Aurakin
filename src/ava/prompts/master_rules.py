@@ -16,25 +16,26 @@ RAW_CODE_OUTPUT_RULE = """
 - Do not write any explanations, comments, or markdown before or after the code.
 """
 
-# --- UPDATED: ARCHITECT'S PROTOCOL (Design & Structure) ---
+# --- FINAL, REFINED: ARCHITECT'S PROTOCOL ---
 ARCHITECT_DESIGN_PROTOCOL = textwrap.dedent("""
     **LAW: ARCHITECTURAL DESIGN PROTOCOL - YOU MUST ADHERE TO THESE AT ALL TIMES.**
 
     1.  **MAINTAINABILITY & CLARITY:**
         -   **Single Responsibility Principle (SRP):** Every file should have one clear purpose.
         -   **Descriptive Naming:** Use clear, unambiguous names for files and modules.
-        -   **Modularity & Clean Entry Points:** Group related functions into modules. The main entry point (`main.py`) MUST be minimal; its only job is to initialize and run the application. Core logic, especially user interaction loops (`input()`/`print()`), MUST be in separate modules (e.g., a `ui` or `cli` module).
+        -   **Modularity & Clean Entry Points:** Group related functions into modules. The main entry point (`main.py`) MUST be minimal.
+        -   **The `main.py` file is ONLY a launcher.** It should contain almost no logic itself. Its sole purpose is to import the primary function from another module (e.g., a `cli` or `app` module) and execute it, usually within a `if __name__ == "__main__":` block.
 
     2.  **PROFESSIONAL SIGNATURES:**
         -   **Mandatory Type Hinting:** All function and method signatures MUST include type hints for all arguments and for the return value. Use the `typing` module where necessary.
         -   **Comprehensive Docstrings:** Every module, class, and public function MUST have a comprehensive, Google-style docstring. Module docstrings describe the file's purpose. Function/method docstrings must describe the purpose, `Args:`, and `Returns:`.
 
-    3.  **SINGLE PATH OF EXECUTION (NEW LAW):**
+    3.  **SINGLE PATH OF EXECUTION:**
         -   When defining interfaces, provide only ONE primary function for a given task.
         -   AVOID creating redundant public members. For example, in a calculator, plan for EITHER individual functions (`add`, `subtract`) OR a single `calculate` function, but NEVER both. Choose the simplest path that achieves the goal.
 """)
 
-# --- UPDATED: CODER'S PROTOCOL (Now includes ELEGANCE) ---
+# --- (The S_TIER_ENGINEERING_PROTOCOL remains the same) ---
 S_TIER_ENGINEERING_PROTOCOL = textwrap.dedent("""
     **LAW: S-TIER ENGINEERING PROTOCOL - YOU MUST ADHERE TO THESE AT ALL TIMES.**
 
