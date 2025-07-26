@@ -67,7 +67,7 @@ class EventCoordinator:
         self._wire_lsp_events()
         self._wire_visualizer_events()
         self._wire_test_lab_events()
-        self._wire_executor_events() # NEW
+        self._wire_executor_events()  # NEW
 
         # Allows plugins to request core manager instances for advanced operations.
         self.event_bus.subscribe(
@@ -121,6 +121,13 @@ class EventCoordinator:
             self.service_manager.project_manager.active_project_path))
         self.event_bus.subscribe("agent_activity_started", visualizer._handle_agent_activity)
         self.event_bus.subscribe("ai_workflow_finished", visualizer._deactivate_all_connections)
+
+        # --- THIS IS THE FIX ---
+        # When a test file is generated, tell the visualizer to refresh its view from the disk.
+        self.event_bus.subscribe("test_file_generated", lambda path: visualizer.display_existing_project(
+            self.service_manager.project_manager.active_project_path))
+        # --- END OF FIX ---
+
         logger.info("Project Visualizer events wired.")
 
     def _wire_lsp_events(self) -> None:

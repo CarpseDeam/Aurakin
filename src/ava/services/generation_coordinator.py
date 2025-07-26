@@ -23,6 +23,16 @@ class GenerationCoordinator(BaseGenerationService):
         super().__init__(service_manager, event_bus)
         self.validator = ResponseValidatorService()
 
+    def _sanitize_code_output(self, raw_code: str) -> str:
+        """Removes markdown fences and leading/trailing whitespace from LLM-generated code."""
+        if raw_code.startswith("```python"):
+            raw_code = raw_code[len("```python"):].strip()
+        elif raw_code.startswith("```"):
+            raw_code = raw_code[len("```"):].strip()
+        if raw_code.endswith("```"):
+            raw_code = raw_code[:-len("```")].strip()
+        return raw_code
+
     async def coordinate_generation(
             self,
             existing_files: Optional[Dict[str, str]],
@@ -121,7 +131,7 @@ class GenerationCoordinator(BaseGenerationService):
                 if full_streamed_content is None:
                     self.event_bus.emit("ai_workflow_finished")
                     return None
-                file_content = full_streamed_content
+                file_content = self._sanitize_code_output(full_streamed_content)
 
             generated_files[target_file] = file_content
             self.event_bus.emit("finalize_editor_content", target_file)
@@ -136,7 +146,6 @@ class GenerationCoordinator(BaseGenerationService):
         Dict[str, str]]:
         self.log("info", "--- Starting Rewrite-and-Diff Modification Workflow ---")
 
-        # Phase 1: Call the Rewriter Agent
         self.event_bus.emit("agent_status_changed", "Rewriter", "Analyzing and rewriting files...", "fa5s.edit")
 
         rewriter_prompt = MODIFICATION_REWRITER_PROMPT.format(
@@ -144,13 +153,12 @@ class GenerationCoordinator(BaseGenerationService):
             existing_files_json=json.dumps(existing_files, indent=2)
         )
 
-        # Using 'architect' role as this is a high-level, multi-file reasoning task.
         rewriter_response = await self._call_llm_agent(rewriter_prompt, "architect")
 
         if not rewriter_response or not rewriter_response.strip():
             self.log("error", "Rewriter agent returned an empty response. Aborting modification.")
             self.event_bus.emit("ai_workflow_finished")
-            return existing_files  # Return original files on failure
+            return existing_files
 
         rewritten_files = self.validator.extract_and_parse_json(rewriter_response)
 
@@ -169,33 +177,23 @@ class GenerationCoordinator(BaseGenerationService):
 
         final_code = existing_files.copy()
 
-        # Phase 2: Animate and Apply Changes for each file
         for filename, new_content in rewritten_files.items():
-
-            # --- THE NEW, SIMPLIFIED LOGIC ---
-            # This replaces the complex diff animation with a simple, reliable "re-typing" animation.
-
             self.log("info", f"Applying character-stream animation for '{filename}'")
 
-            # Activate the line in the node viewer
             if self.project_manager and self.project_manager.active_project_path:
                 abs_path_str = str(self.project_manager.active_project_path / filename)
                 self.event_bus.emit("agent_activity_started", "Rewriter", abs_path_str)
 
-            # Instantly clear the editor content
             self.event_bus.emit("file_content_updated", filename, "")
-            await asyncio.sleep(0.1)  # Give UI a moment to process the clear
+            await asyncio.sleep(0.1)
 
-            # Stream the new content in character by character for a "typing" effect
             for char in new_content:
                 self.event_bus.emit("stream_text_at_cursor", filename, char)
-                await asyncio.sleep(0.001)  # Tiny sleep to keep UI responsive and control typing speed
+                await asyncio.sleep(0.001)
 
-            # Finalize the content and mark the editor as "clean"
             self.event_bus.emit("finalize_editor_content", filename)
             final_code[filename] = new_content
-            await asyncio.sleep(0.5)  # A short pause before moving to the next file
-            # --- END OF NEW LOGIC ---
+            await asyncio.sleep(0.5)
 
         self.log("success", "✅ Modification Workflow Finished Successfully.")
         self.event_bus.emit("ai_workflow_finished")

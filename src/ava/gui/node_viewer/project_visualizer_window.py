@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 # Constants for layout
 COLUMN_WIDTH = 250
-ROW_HEIGHT = 65  # Tighter row spacing
+ROW_HEIGHT = 65
 
 
 def _normalize_path_key(path_str: str) -> str:
@@ -54,10 +54,8 @@ class ZoomableView(QGraphicsView):
 
     def __init__(self, scene, parent=None):
         super().__init__(scene, parent)
-        # --- THE SMOOTHNESS FIX: Zoom from the center of the view ---
         self.setTransformationAnchor(QGraphicsView.AnchorViewCenter)
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
-        # --- END OF FIX ---
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
     def wheelEvent(self, event: QWheelEvent):
@@ -105,19 +103,26 @@ class ProjectVisualizerWindow(QMainWindow):
             return
 
         menu = QMenu(self.view)
+        rel_path = Path(item.path).relative_to(self.project_manager.active_project_path).as_posix()
 
         # Action: Run Program
         if item.node_type == 'file' and item.name.endswith('.py'):
-            rel_path = Path(item.path).relative_to(self.project_manager.active_project_path).as_posix()
             command_to_run = f"python {rel_path}"
             action = menu.addAction(f"▶️ Run Program")
             action.triggered.connect(
                 lambda checked=False, cmd=command_to_run: self.event_bus.emit("run_program_and_heal_requested", cmd)
             )
 
-        # Action: Generate Unit Tests
+        # Action: Generate Tests for Entire File
+        if item.node_type == 'file' and item.name.endswith('.py'):
+            action = menu.addAction(f"Generate Tests for {item.name}")
+            action.triggered.connect(
+                lambda checked=False, path=rel_path: self.event_bus.emit("test_file_generation_requested", path)
+            )
+
+        # Action: Generate Unit Tests for a single function
         if item.node_type == 'function':
-            action = menu.addAction(f"Generate Unit Tests for {item.name}()")
+            action = menu.addAction(f"Generate Tests for {item.name}()")
             action.triggered.connect(lambda: self._request_unit_test_generation(item))
 
         # Action: Run Tests & Heal (from root)
@@ -129,7 +134,6 @@ class ProjectVisualizerWindow(QMainWindow):
             )
 
         if not menu.isEmpty():
-            # Cleanup trailing separator if it exists
             if menu.actions() and menu.actions()[-1].isSeparator():
                 menu.removeAction(menu.actions()[-1])
             menu.exec(self.view.mapToGlobal(pos))
@@ -142,17 +146,14 @@ class ProjectVisualizerWindow(QMainWindow):
             node.name,
             node.path
         )
-        QTimer.singleShot(100, lambda: self.log("success", "Event 'unit_test_generation_requested' emitted."))
 
     @qasync.Slot(dict)
     def display_scaffold(self, scaffold_files: Dict[str, str]):
-        """Entry point for displaying a new project scaffold."""
         if not self.project_manager.active_project_path: return
         self._render_project_structure(scaffold_files)
 
     @qasync.Slot(str)
     def display_existing_project(self, project_path_str: str) -> None:
-        """Entry point for displaying an existing project from disk."""
         project_files = self.project_manager.get_project_files()
         if not project_files:
             self.log("warning", f"No readable files found in project: {project_path_str}")
@@ -316,10 +317,8 @@ class ProjectVisualizerWindow(QMainWindow):
 
     def _on_layout_animation_finished(self, fit_view: bool):
         self._update_all_connections()
-        # --- THE ZOOM-OUT FIX: Use a timer to ensure the view is ready ---
         if fit_view:
             QTimer.singleShot(10, self._fit_view_with_padding)
-        # --- END OF FIX ---
 
     def _update_all_connections(self):
         for conn in self.connections:
@@ -329,14 +328,12 @@ class ProjectVisualizerWindow(QMainWindow):
     def _clear_scene(self) -> None:
         for conn in self.connections:
             conn.animation_timer.stop()
-
         self.scene.clear()
         self.nodes.clear()
         self.connections.clear()
         self._active_connections.clear()
 
     def _fit_view_with_padding(self) -> None:
-        """Adjusts the view to show all items with a nice margin."""
         rect = self.scene.itemsBoundingRect()
         if not rect.isValid(): return
         padding = 50
@@ -344,7 +341,6 @@ class ProjectVisualizerWindow(QMainWindow):
         self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
     def _find_node_by_path(self, target_path: str) -> Optional[ProjectNode]:
-        """Finds a node by its file path, used as the entry point for agent activity."""
         norm_target_path = _normalize_path_key(target_path)
         node = self.nodes.get(norm_target_path)
         if node and node.node_type in ["file", "folder"]:

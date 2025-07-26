@@ -41,7 +41,8 @@ class WorkflowManager:
         self.event_bus.subscribe("session_cleared", self._on_session_cleared)
         self.event_bus.subscribe("workflow_finalized", self._on_workflow_finalized)
         self.event_bus.subscribe("unit_test_generation_requested", self.handle_test_generation_request)
-        self.event_bus.subscribe("heal_project_with_tests_requested", self.handle_test_heal_request)
+        self.event_bus.subscribe("test_file_generation_requested", self.handle_file_test_generation_request)
+        self.event_bus.subscribe("heal_project_requested", self.handle_test_heal_request)
         self.event_bus.subscribe("run_program_and_heal_requested", self.handle_run_and_heal_request)
 
     def _on_workflow_finalized(self, final_code: Dict[str, str]):
@@ -73,7 +74,7 @@ class WorkflowManager:
 
     async def _run_build_workflow(self, user_request: str, existing_files: Optional[Dict[str, str]]):
         """Orchestrates the 'Blueprint -> Implement -> Review' assembly line."""
-        self._last_user_request = user_request  # Store for healer
+        self._last_user_request = user_request
         project_manager = self.service_manager.get_project_manager()
         coordinator = self.service_manager.get_generation_coordinator()
 
@@ -120,8 +121,13 @@ class WorkflowManager:
             self.task_manager.start_ai_workflow_task(workflow_coroutine)
 
     async def handle_test_generation_request(self, function_name: str, source_file_path_str: str):
-        """Handles the request from the UI to generate a unit test for a function."""
-        self.log("info", f"Test generation request received for '{function_name}'.")
+        """Handles the request from the UI to generate a unit test for a single function."""
+        self.task_manager.start_ai_workflow_task(
+            self._run_single_function_test_workflow(function_name, source_file_path_str)
+        )
+
+    async def _run_single_function_test_workflow(self, function_name: str, source_file_path_str: str):
+        self.log("info", f"Test generation request received for function '{function_name}'.")
         test_generation_service = self.service_manager.get_test_generation_service()
         project_manager = self.service_manager.get_project_manager()
         extractor_service = self.service_manager.get_code_extractor_service()
@@ -135,24 +141,51 @@ class WorkflowManager:
             file_content = source_file_path.read_text(encoding='utf-8')
             function_code = extractor_service.extract_code_block(file_content, function_name)
             if not function_code:
-                self.log("error",
-                         f"Code Extractor failed to find function '{function_name}' in '{source_file_path.name}'.")
-                self.event_bus.emit("ai_workflow_finished")
+                self.log("error", f"Code Extractor failed to find function '{function_name}'.")
                 return
         except Exception as e:
             self.log("error", f"Failed to read or extract from source file: {e}")
-            self.event_bus.emit("ai_workflow_finished")
             return
 
         relative_source_path = source_file_path.relative_to(project_manager.active_project_path).as_posix()
-
         generated_assets = await test_generation_service.generate_test_for_function(
             function_name, function_code, relative_source_path
         )
+        await self._save_and_commit_test_assets(generated_assets, source_file_path, f"tests for {function_name}")
 
-        if not generated_assets or "test_code" not in generated_assets:
-            self.log("error", f"Test generation failed for function '{function_name}'.")
-            self.event_bus.emit("ai_workflow_finished")
+    def handle_file_test_generation_request(self, source_file_rel_path: str):
+        """Handles the request from the UI to generate tests for an entire file."""
+        self.task_manager.start_ai_workflow_task(
+            self._run_full_file_test_workflow(source_file_rel_path)
+        )
+
+    async def _run_full_file_test_workflow(self, source_file_rel_path: str):
+        self.log("info", f"Test generation request received for file '{source_file_rel_path}'.")
+        project_manager = self.service_manager.get_project_manager()
+        test_generation_service = self.service_manager.get_test_generation_service()
+
+        if not all([test_generation_service, project_manager, project_manager.active_project_path]):
+            self.log("error", "Cannot generate test file: Services or active project not available.")
+            return
+
+        source_file_abs_path = project_manager.active_project_path / source_file_rel_path
+        try:
+            file_content = source_file_abs_path.read_text(encoding='utf-8')
+        except Exception as e:
+            self.log("error", f"Failed to read source file '{source_file_abs_path.name}': {e}")
+            return
+
+        generated_assets = await test_generation_service.generate_tests_for_file(
+            file_content, source_file_rel_path
+        )
+        await self._save_and_commit_test_assets(generated_assets, source_file_abs_path,
+                                                f"tests for file {source_file_abs_path.name}")
+
+    async def _save_and_commit_test_assets(self, generated_assets: Optional[Dict[str, str]], source_file_path: Path,
+                                           commit_subject: str):
+        project_manager = self.service_manager.get_project_manager()
+        if not generated_assets or "test_code" not in generated_assets or not project_manager.active_project_path:
+            self.log("error", f"Test generation failed for '{commit_subject}'.")
             return
 
         test_content = generated_assets["test_code"]
@@ -171,13 +204,16 @@ class WorkflowManager:
             project_manager.git_manager.stage_file(test_file_rel_path)
             if requirements_content:
                 req_path = project_manager.active_project_path / "requirements.txt"
-                req_path.write_text(requirements_content, encoding='utf-8')
+                current_reqs = req_path.read_text(encoding='utf-8') if req_path.exists() else ""
+                # A simple way to merge requirements without duplicates
+                new_reqs = set(current_reqs.splitlines())
+                new_reqs.update(requirements_content.splitlines())
+                req_path.write_text("\n".join(sorted(list(new_reqs))), encoding='utf-8')
                 project_manager.git_manager.stage_file("requirements.txt")
-            project_manager.git_manager.commit_staged_files(f"feat: Add unit tests for {function_name}")
+            project_manager.git_manager.commit_staged_files(f"feat: Add {commit_subject}")
 
         self.event_bus.emit("file_content_updated", test_file_rel_path, test_content)
         self.event_bus.emit("test_file_generated", test_file_rel_path)
-        self.event_bus.emit("ai_workflow_finished")
 
     def handle_test_heal_request(self):
         self.log("info", "Test-based Heal request received. Starting Heal workflow.")
@@ -197,20 +233,53 @@ class WorkflowManager:
         self.task_manager.start_ai_workflow_task(self._run_program_and_heal_workflow(command))
 
     async def _run_program_and_heal_workflow(self, command: str):
+        execution_service = self.service_manager.get_execution_service()
         self.event_bus.emit("agent_status_changed", "Executor", f"Running '{command}'...", "fa5s.play")
-        exit_code, runtime_output = await self.service_manager.get_execution_service().execute_and_capture(command)
+        self.event_bus.emit("execute_command_requested", command)
+        exit_code, runtime_output = await execution_service.execute_and_capture(command)
+
         if exit_code == 0:
             self.log("success", "Program ran successfully! No healing needed.")
             self.event_bus.emit("agent_status_changed", "Executor", "Run successful!", "fa5s.check-circle")
             return
+
+        if "SyntaxError:" in runtime_output:
+            self.log("warning", "SyntaxError detected. Attempting to fix syntax first.")
+            await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, {"runtime_traceback": runtime_output})
+            self.event_bus.emit("terminal_output_received", "\n--- Syntax error fixed. Please try running the program again. ---")
+            return
+
+        if "ModuleNotFoundError" in runtime_output:
+            self.log("info", "ModuleNotFoundError detected. Attempting to install dependencies.")
+            self.event_bus.emit("terminal_output_received",
+                                "\n--- Detected a missing library. Checking for requirements.txt... ---")
+
+            requirements_path = self.service_manager.project_manager.active_project_path / "requirements.txt"
+            if not requirements_path.exists():
+                self.log("warning", "requirements.txt not found. Cannot automatically install dependencies.")
+                self.event_bus.emit("terminal_output_received",
+                                    "--- requirements.txt not found. Please create one or ask the AI to generate it. ---")
+                return
+
+            self.event_bus.emit("terminal_output_received", "--- Found requirements.txt. Attempting to install... ---")
+            install_command = "pip install -r requirements.txt"
+            install_exit_code, _ = await execution_service.execute_and_capture(install_command)
+
+            if install_exit_code == 0:
+                self.event_bus.emit("terminal_output_received",
+                                    "\n--- Dependencies installed successfully. Please try running the program again. ---")
+            else:
+                self.event_bus.emit("terminal_output_received",
+                                    "\n--- Failed to install dependencies. Please check the error log above. ---")
+            return
+
+        # For all other errors, proceed with the AI Healer
         await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, {"runtime_traceback": runtime_output})
 
     async def _run_generic_heal_workflow(self, prompt_template: str, context: Dict[str, str]):
-        """The core logic for any self-healing workflow."""
         self.log("warning", "A failure was detected. Engaging Healer Agent.")
         self.event_bus.emit("agent_status_changed", "Healer", "Failure detected, attempting to fix...",
                             "fa5s.heartbeat")
-
         project_manager = self.service_manager.get_project_manager()
         llm_client = self.service_manager.get_llm_client()
         from src.ava.services import ResponseValidatorService
@@ -223,11 +292,9 @@ class WorkflowManager:
             **context
         }
         healer_prompt = prompt_template.format(**prompt_context)
-
         healer_response_stream = llm_client.stream_chat(
             *llm_client.get_model_for_role("architect"), healer_prompt, "healer"
         )
-
         full_healer_response = "".join([chunk async for chunk in healer_response_stream])
 
         if not full_healer_response:
