@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from collections import defaultdict
 import qasync
+import os  # NEW IMPORT
 
 from PySide6.QtCore import (
     QPointF,
@@ -41,6 +42,11 @@ logger = logging.getLogger(__name__)
 # Constants for layout
 COLUMN_WIDTH = 250
 ROW_HEIGHT = 65  # Tighter row spacing
+
+
+def _normalize_path_key(path_str: str) -> str:
+    """THE FIX: A single, authoritative function to normalize a path for use as a dictionary key."""
+    return os.path.normcase(os.path.abspath(path_str))
 
 
 class ZoomableView(QGraphicsView):
@@ -127,7 +133,10 @@ class ProjectVisualizerWindow(QMainWindow):
         tree = self._build_full_code_tree(project_files)
 
         root_node = ProjectNode(root_path.name, str(root_path), 'folder')
-        self.nodes[str(root_path)] = root_node
+
+        # THE FIX (Part 1): Use the normalized path as the dictionary key.
+        root_key = _normalize_path_key(str(root_path))
+        self.nodes[root_key] = root_node
         self.scene.addItem(root_node)
 
         self._create_nodes_recursively(tree, root_path, root_node)
@@ -165,7 +174,11 @@ class ProjectVisualizerWindow(QMainWindow):
             node_type = 'folder' if is_folder else 'file'
 
             node = ProjectNode(name, current_path_str, node_type)
-            self._setup_new_node(node, parent_node, current_path_str)
+
+            # THE FIX (Part 1): Use the normalized path as the dictionary key.
+            node_key = _normalize_path_key(current_path_str) if node_type in ['file',
+                                                                              'folder'] else f"{_normalize_path_key(current_path_str)}::{name}"
+            self._setup_new_node(node, parent_node, node_key)
 
             structure = children.get('__structure__')
             if structure:
@@ -176,12 +189,12 @@ class ProjectVisualizerWindow(QMainWindow):
 
     def _create_structure_nodes(self, structure: Dict, file_path_str: str, file_node: ProjectNode):
         for class_name in structure.get('classes', {}):
-            class_path_key = f"{file_path_str}::{class_name}"
+            class_path_key = f"{_normalize_path_key(file_path_str)}::{class_name}"
             class_node = ProjectNode(class_name, file_path_str, 'class')
             self._setup_new_node(class_node, file_node, class_path_key)
 
         for func_name in structure.get('functions', {}):
-            func_path_key = f"{file_path_str}::{func_name}"
+            func_path_key = f"{_normalize_path_key(file_path_str)}::{func_name}"
             func_node = ProjectNode(func_name, file_path_str, 'function')
             self._setup_new_node(func_node, file_node, func_path_key)
 
@@ -225,11 +238,14 @@ class ProjectVisualizerWindow(QMainWindow):
         root_path = str(self.project_manager.active_project_path) if self.project_manager.active_project_path else None
         if not root_path: return {}
 
-        root_node = self.nodes.get(root_path)
+        root_key = _normalize_path_key(root_path)
+        root_node = self.nodes.get(root_key)
         if not root_node: return {}
 
         def layout_recursively(node: ProjectNode, depth: int):
-            node_key = node.path if node.node_type in ['file', 'folder'] else f"{node.path}::{node.name}"
+            # THE FIX (Part 1): Use normalized paths for positioning dictionary keys as well.
+            node_key = _normalize_path_key(node.path) if node.node_type in ['file',
+                                                                            'folder'] else f"{_normalize_path_key(node.path)}::{node.name}"
 
             x = depth * COLUMN_WIDTH
             y = y_map[depth] * ROW_HEIGHT
@@ -269,13 +285,11 @@ class ProjectVisualizerWindow(QMainWindow):
         self._animation_group.start()
 
     def _on_layout_animation_finished(self, fit_view: bool):
-        """A single handler to ensure operations happen in the correct order after animation."""
         self._update_all_connections()
         if fit_view:
             self._fit_view_with_padding()
 
     def _update_all_connections(self):
-        """Forces a redraw of all visible connection paths."""
         for conn in self.connections:
             if conn.isVisible():
                 conn.update_path()
@@ -287,7 +301,6 @@ class ProjectVisualizerWindow(QMainWindow):
         self._active_connection = None
 
     def _fit_view_with_padding(self) -> None:
-        """Adjusts the view to show all items with a nice margin."""
         rect = self.scene.itemsBoundingRect()
         if not rect.isValid(): return
         padding = 50
@@ -295,20 +308,19 @@ class ProjectVisualizerWindow(QMainWindow):
         self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
     def _find_connection_for_target(self, target_path: str) -> Optional[AnimatedConnection]:
-        # Normalize the path for comparison
-        norm_target_path = str(Path(target_path).resolve())
+        # THE FIX (Part 2): Use the exact same normalization for the lookup.
+        norm_target_key = _normalize_path_key(target_path)
+        self.log('info', f"Attempting to find node with normalized key: '{norm_target_key}'")
 
-        # Find the node that corresponds to this exact absolute path
-        node = self.nodes.get(norm_target_path)
+        node = self.nodes.get(norm_target_key)
         if node and node.incoming_connection:
+            self.log('success', f"Found node '{node.name}' for activity animation.")
             return node.incoming_connection
 
-        # Fallback for keys that might not be absolute paths (like for functions/classes)
-        for node_key, node_item in self.nodes.items():
-            # The 'path' attribute on the node is always the absolute file path
-            if hasattr(node_item, 'path') and str(Path(node_item.path).resolve()) == norm_target_path:
-                if node_item.incoming_connection:
-                    return node_item.incoming_connection
+        # Add extra logging for the failure case to see what keys we *do* have.
+        self.log('warning', f"Could not find node with key '{norm_target_key}'.")
+        if len(self.nodes) < 20:  # Don't spam the log for huge projects
+            self.log('info', f"Available node keys are: {list(self.nodes.keys())}")
 
         return None
 
@@ -322,11 +334,10 @@ class ProjectVisualizerWindow(QMainWindow):
             self.log("warning", f"Could not find a connection for target path: {target_file_path}")
             return
 
-        # Assign a color based on the agent's role
         agent_colors = {
             "architect": Colors.AGENT_ARCHITECT_COLOR,
             "coder": Colors.AGENT_CODER_COLOR,
-            "rewriter": Colors.ACCENT_GREEN,  # Let's give the rewriter a new color!
+            "rewriter": Colors.ACCENT_GREEN,
             "healer": Colors.ACCENT_RED,
         }
         color = agent_colors.get(agent_name.lower(), Colors.ACCENT_BLUE)
