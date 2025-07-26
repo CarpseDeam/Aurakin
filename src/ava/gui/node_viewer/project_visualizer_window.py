@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 from collections import defaultdict
 import qasync
-import os  # NEW IMPORT
+import os
 
 from PySide6.QtCore import (
     QPointF,
@@ -45,7 +45,7 @@ ROW_HEIGHT = 65  # Tighter row spacing
 
 
 def _normalize_path_key(path_str: str) -> str:
-    """THE FIX: A single, authoritative function to normalize a path for use as a dictionary key."""
+    """A single, authoritative function to normalize a path for use as a dictionary key."""
     return os.path.normcase(os.path.abspath(path_str))
 
 
@@ -76,7 +76,8 @@ class ProjectVisualizerWindow(QMainWindow):
         self.code_structure_service = CodeStructureService()
         self.nodes: Dict[str, ProjectNode] = {}
         self.connections: List[AnimatedConnection] = []
-        self._active_connection: Optional[AnimatedConnection] = None
+        # --- THE FIX (Part 1): Track multiple active connections ---
+        self._active_connections: List[AnimatedConnection] = []
         self._animation_group = QParallelAnimationGroup()
 
         self.setWindowTitle("Project Visualizer (Test Lab)")
@@ -133,8 +134,6 @@ class ProjectVisualizerWindow(QMainWindow):
         tree = self._build_full_code_tree(project_files)
 
         root_node = ProjectNode(root_path.name, str(root_path), 'folder')
-
-        # THE FIX (Part 1): Use the normalized path as the dictionary key.
         root_key = _normalize_path_key(str(root_path))
         self.nodes[root_key] = root_node
         self.scene.addItem(root_node)
@@ -174,8 +173,6 @@ class ProjectVisualizerWindow(QMainWindow):
             node_type = 'folder' if is_folder else 'file'
 
             node = ProjectNode(name, current_path_str, node_type)
-
-            # THE FIX (Part 1): Use the normalized path as the dictionary key.
             node_key = _normalize_path_key(current_path_str) if node_type in ['file',
                                                                               'folder'] else f"{_normalize_path_key(current_path_str)}::{name}"
             self._setup_new_node(node, parent_node, node_key)
@@ -243,7 +240,6 @@ class ProjectVisualizerWindow(QMainWindow):
         if not root_node: return {}
 
         def layout_recursively(node: ProjectNode, depth: int):
-            # THE FIX (Part 1): Use normalized paths for positioning dictionary keys as well.
             node_key = _normalize_path_key(node.path) if node.node_type in ['file',
                                                                             'folder'] else f"{_normalize_path_key(node.path)}::{node.name}"
 
@@ -298,7 +294,7 @@ class ProjectVisualizerWindow(QMainWindow):
         self.scene.clear()
         self.nodes.clear()
         self.connections.clear()
-        self._active_connection = None
+        self._active_connections.clear()
 
     def _fit_view_with_padding(self) -> None:
         rect = self.scene.itemsBoundingRect()
@@ -307,32 +303,43 @@ class ProjectVisualizerWindow(QMainWindow):
         rect.adjust(-padding, -padding, padding, padding)
         self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
 
-    def _find_connection_for_target(self, target_path: str) -> Optional[AnimatedConnection]:
-        # THE FIX (Part 2): Use the exact same normalization for the lookup.
-        norm_target_key = _normalize_path_key(target_path)
-        self.log('info', f"Attempting to find node with normalized key: '{norm_target_key}'")
+    def _find_node_by_path(self, target_path: str) -> Optional[ProjectNode]:
+        """Finds a node by its file path, used as the entry point for agent activity."""
+        norm_target_path = _normalize_path_key(target_path)
+        # First, try a direct lookup, which is fastest.
+        node = self.nodes.get(norm_target_path)
+        if node and node.node_type in ["file", "folder"]:
+            return node
 
-        node = self.nodes.get(norm_target_key)
-        if node and node.incoming_connection:
-            self.log('success', f"Found node '{node.name}' for activity animation.")
-            return node.incoming_connection
-
-        # Add extra logging for the failure case to see what keys we *do* have.
-        self.log('warning', f"Could not find node with key '{norm_target_key}'.")
-        if len(self.nodes) < 20:  # Don't spam the log for huge projects
-            self.log('info', f"Available node keys are: {list(self.nodes.keys())}")
-
+        # If direct lookup fails (e.g., key includes function name), iterate.
+        for node in self.nodes.values():
+            if _normalize_path_key(node.path) == norm_target_path and node.node_type in ["file", "folder"]:
+                return node
         return None
 
     def _handle_agent_activity(self, agent_name: str, target_file_path: str):
         self.log("info", f"Visualizing activity for Agent: {agent_name} on file: {Path(target_file_path).name}")
-        if self._active_connection:
-            self._active_connection.deactivate()
+        self._deactivate_all_connections()  # Clear previous activity
 
-        connection = self._find_connection_for_target(target_file_path)
-        if not connection:
-            self.log("warning", f"Could not find a connection for target path: {target_file_path}")
+        # --- THE FIX (Part 2): Full Path Tracing and Auto-Expansion ---
+        target_node = self._find_node_by_path(target_file_path)
+        if not target_node:
+            self.log("warning", f"Could not find a node for target path: {target_file_path}")
             return
+
+        needs_relayout = False
+        path_nodes = []
+        current = target_node
+        while current:
+            path_nodes.insert(0, current)
+            if not current.is_expanded and current.child_nodes:
+                current.is_expanded = True
+                self._set_children_visibility(current, True)
+                needs_relayout = True
+            current = current.parent_node
+
+        if needs_relayout:
+            self._relayout_and_animate()
 
         agent_colors = {
             "architect": Colors.AGENT_ARCHITECT_COLOR,
@@ -342,14 +349,17 @@ class ProjectVisualizerWindow(QMainWindow):
         }
         color = agent_colors.get(agent_name.lower(), Colors.ACCENT_BLUE)
 
-        connection.activate(color)
-        self._active_connection = connection
+        for node in path_nodes:
+            if node.incoming_connection:
+                node.incoming_connection.activate(color)
+                self._active_connections.append(node.incoming_connection)
 
     def _deactivate_all_connections(self, *args, **kwargs):
         self.log("info", "Workflow finished. Deactivating all visualizer connections.")
-        if self._active_connection:
-            self._active_connection.deactivate()
-            self._active_connection = None
+        # --- THE FIX (Part 3): Deactivate all connections in the list ---
+        for conn in self._active_connections:
+            conn.deactivate()
+        self._active_connections.clear()
 
     def show(self) -> None:
         super().show()
