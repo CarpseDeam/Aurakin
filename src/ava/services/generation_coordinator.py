@@ -49,7 +49,6 @@ class GenerationCoordinator(BaseGenerationService):
         self.log("info", "--- Starting Unified Hierarchical Workflow ---")
         self.event_bus.emit("agent_status_changed", "Architect", "Devising high-level strategy...", "fa5s.brain")
 
-        # Provide existing files as context if they exist, otherwise provide an empty dict.
         context_files_json = json.dumps(existing_files, indent=2) if existing_files else "{}"
 
         meta_prompt = META_ARCHITECT_PROMPT.format(
@@ -104,19 +103,15 @@ class GenerationCoordinator(BaseGenerationService):
             self.event_bus.emit("ai_workflow_finished")
             return None
 
+        # --- NEW: Architect Animation ---
         if self.project_manager and self.project_manager.active_project_path:
             self.event_bus.emit("agent_activity_started", "Architect", str(self.project_manager.active_project_path))
-            await asyncio.sleep(1.5)
+            await asyncio.sleep(1.5)  # Pause to let the animation be seen
 
         files_to_generate = {item.get('file'): "" for item in interface_contract if item.get('file')}
         self.log("success", f"File Planner designed {len(files_to_generate)} files.")
 
-        # For new projects, this creates the initial placeholders. For modifications, it adds new ones.
-        self.event_bus.emit("project_scaffold_generated", files_to_generate)
-        await asyncio.sleep(0.5)
-
         # --- PHASE 2: CODER - FILE-BY-FILE IMPLEMENTATION ---
-        # Start with the existing files and overwrite them with newly generated content.
         final_code = existing_files.copy() if existing_files else {}
 
         for i, contract_item in enumerate(interface_contract):
@@ -126,21 +121,18 @@ class GenerationCoordinator(BaseGenerationService):
             if not target_file:
                 continue
 
-            self.log("info", f"Coder starting file ({i + 1}/{len(files_to_generate)}): {target_file}")
+            self.log("info", f"Coder starting file ({i + 1}/{len(interface_contract)}): {target_file}")
             self.event_bus.emit("agent_status_changed", "Coder",
-                                f"Writing {target_file} ({i + 1}/{len(files_to_generate)})...", "fa5s.code")
-            self.event_bus.emit("file_content_updated", target_file, "")  # Clear the tab before streaming
+                                f"Writing {target_file} ({i + 1}/{len(interface_contract)})...", "fa5s.code")
 
-            # ... (Rest of Coder logic is the same)
             file_content = ""
-            made_api_call = True  # Assume we'll call the API
+            made_api_call = True
 
             if "pydantic_models" in parsed_strategy and pydantic_models and target_file.endswith(
                     (".py")) and "models" in target_file:
                 file_content = pydantic_models
                 made_api_call = False
             elif target_file == 'requirements.txt':
-                # For modifications, append to existing requirements if possible.
                 reqs = set((existing_files.get(target_file, "")).splitlines())
                 reqs.add("pytest")
                 if "pydantic" in pydantic_models.lower():
@@ -151,15 +143,19 @@ class GenerationCoordinator(BaseGenerationService):
                 file_content = "# Kintsugi AvA Default Ignore\n.venv/\nvenv/\n__pycache__/\n*.py[co]\nrag_db/\n.env\n*.log\n"
                 made_api_call = False
             elif target_file.endswith('__init__.py'):
-                file_content = ""  # Empty __init__.py
+                file_content = ""
                 made_api_call = False
 
             if not made_api_call:
+                self.event_bus.emit("file_content_updated", target_file, file_content)
+                await asyncio.sleep(0.1)  # Give UI time to create tab if needed
                 self.event_bus.emit("stream_text_at_cursor", target_file, file_content)
             else:
                 if self.project_manager and self.project_manager.active_project_path:
                     abs_path_str = str(self.project_manager.active_project_path / target_file)
                     self.event_bus.emit("agent_activity_started", "Coder", abs_path_str)
+
+                self.event_bus.emit("file_content_updated", target_file, "")
                 await asyncio.sleep(0.1)
 
                 context_blocks = []

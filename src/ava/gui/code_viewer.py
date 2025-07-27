@@ -131,12 +131,15 @@ class CodeViewerWindow(QMainWindow):
         quick_open_shortcut.activated.connect(self._show_quick_file_finder)
 
     def _connect_events(self) -> None:
+        # This old event is no longer the primary way to display files.
+        # It's kept for potential backward compatibility with other features.
         self.event_bus.subscribe("workflow_finalized", self._on_workflow_finalized)
 
     def _on_workflow_finalized(self, final_code: dict) -> None:
         if self.file_tree_manager:
             self.file_tree_manager.refresh_tree_from_disk()
-        self.display_code(final_code)
+        # The main display logic is now handled by display_final_files,
+        # triggered by the 'display_project_files' event.
 
     def _save_current_file(self) -> None:
         if self.editor_manager:
@@ -206,47 +209,16 @@ class CodeViewerWindow(QMainWindow):
         logger.info(f"[CodeViewer] Loaded project: {project_path.name}")
         self.status_bar.showMessage(f"Loaded project: {project_path.name}", 3000)
 
-    def prepare_for_generation(self, filenames: list, project_path: str = None, is_modification: bool = False) -> None:
-        if not is_modification and project_path:
-            if self.file_tree_manager:
-                self.file_tree_manager.setup_new_project_tree(Path(project_path), filenames)
-            logger.info(f"[CodeViewer] Prepared for new project generation: {len(filenames)} files")
-            self.show_window()
-        elif is_modification:
-            if self.file_tree_manager:
-                self.file_tree_manager.add_placeholders_for_new_files(filenames)
-            self._prepare_tabs_for_modification(filenames)
-            logger.info(f"[CodeViewer] Prepared for modification: {len(filenames)} files")
-            self.show_window()
-
-    def _prepare_tabs_for_modification(self, filenames: list) -> None:
-        if self.project_manager.active_project_path:
-            for filename in filenames:
-                abs_path = self.project_manager.active_project_path / filename
-                if abs_path and abs_path.is_file():
-                    self.editor_manager.open_file_in_tab(abs_path)
-
     @qasync.Slot(dict)
-    def display_code(self, files: dict) -> None:
+    def display_final_files(self, files: dict) -> None:
         """
-        Displays the final generated code by telling the editor manager to update tabs.
+        Displays the final code by telling the editor manager to show specific tabs.
         The manager is responsible for path resolution and normalization.
         """
-        logger.info(f"[CodeViewer] Displaying {len(files)} file(s) and refreshing UI.")
-        for filename, content in files.items():
-            self.editor_manager.create_or_update_tab(filename, content)
-
-    def display_scaffold(self, scaffold_files: dict):
-        """NEW: Displays the entire project scaffold at once."""
-        logger.info(f"[CodeViewer] Displaying {len(scaffold_files)} scaffold file(s).")
-        self.show_window()
-        if self.file_tree_manager and self.project_manager.active_project_path:
-            self.file_tree_manager.setup_new_project_tree(
-                self.project_manager.active_project_path,
-                list(scaffold_files.keys())
-            )
-        self.display_code(scaffold_files)
-
+        logger.info(f"[CodeViewer] Displaying {len(files)} final file(s).")
+        if self.file_tree_manager:
+            self.file_tree_manager.refresh_tree_from_disk()
+        self.editor_manager.display_final_files(files)
 
     def _on_file_selected(self, file_path: Path) -> None:
         """Callback for when a file is selected in the file tree."""

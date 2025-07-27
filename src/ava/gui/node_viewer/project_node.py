@@ -8,7 +8,6 @@ from PySide6.QtWidgets import QGraphicsItem, QGraphicsObject, QStyleOptionGraphi
     QGraphicsSceneHoverEvent
 
 from src.ava.gui.components import Typography
-# FIX: Import AnimatedConnection for type hinting
 from .animated_connection import AnimatedConnection
 
 logger = logging.getLogger(__name__)
@@ -32,12 +31,10 @@ class ProjectNode(QGraphicsObject):
         self.full_code = full_code
         self._is_hovered = False
 
-        # --- State for collapsibility ---
         self.is_expanded = True
         self.child_nodes: List['ProjectNode'] = []
         self.parent_node: Optional['ProjectNode'] = None
 
-        # --- Connections ---
         self.incoming_connections: List['AnimatedConnection'] = []
         self.outgoing_connections: List['AnimatedConnection'] = []
 
@@ -52,13 +49,11 @@ class ProjectNode(QGraphicsObject):
             'class': "fa5s.cubes",
             'function': "fa5s.cogs"
         }
-        # --- FIX: Store the icon name (key) separately ---
         self.icon_key = icon_map.get(self.node_type, "fa5s.question-circle")
         self.icon = qta.icon(self.icon_key, color=QColor("#8b949e"))
 
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
         if change == QGraphicsItem.ItemPositionHasChanged:
-            # Update all connections when this node moves
             for conn in self.incoming_connections:
                 conn.update_path()
             for conn in self.outgoing_connections:
@@ -99,7 +94,6 @@ class ProjectNode(QGraphicsObject):
         painter.fillPath(path, QBrush(bg_color))
         painter.drawPath(path)
 
-        # --- Draw Toggle Icon ---
         if self.child_nodes:
             toggle_rect = self._get_toggle_rect()
             painter.setPen(QPen(text_color, 1.5))
@@ -114,7 +108,6 @@ class ProjectNode(QGraphicsObject):
                                  int(center.y()))  # Horizontal
                 painter.drawLine(int(center.x()), int(center.y() - 3), int(center.x()), int(center.y() + 3))  # Vertical
 
-        # --- FIX: Recreate the icon for painting using the stored key ---
         icon_color = text_color if self.isSelected() else QColor("#8b949e")
         icon_to_paint = qta.icon(self.icon_key, color=icon_color)
 
@@ -124,10 +117,7 @@ class ProjectNode(QGraphicsObject):
 
         text_x = icon_rect.right() + 8
         text_width = NODE_WIDTH - text_x - 8
-        # --- THIS IS THE FIX ---
-        # The height of the text rectangle should be NODE_HEIGHT, not NODE_WIDTH.
         text_rect = QRectF(text_x, 0, text_width, NODE_HEIGHT)
-        # --- END OF FIX ---
         painter.setPen(QPen(text_color))
         painter.setFont(Typography.body())
         elided_name = QFontMetrics(painter.font()).elidedText(self.name, Qt.TextElideMode.ElideRight, text_width)

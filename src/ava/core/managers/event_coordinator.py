@@ -87,12 +87,7 @@ class EventCoordinator:
             return
 
         executor_panel = code_viewer.executor_log_panel
-        # --- THIS IS THE FIX ---
-        # Decouple clearing from running. Any part of the app can now request a clear.
         self.event_bus.subscribe("clear_executor_log", executor_panel.clear_output)
-        # The old event still clears the log for backward compatibility with fire-and-forget buttons
-        self.event_bus.subscribe("execute_command_requested", lambda command: executor_panel.clear_output())
-        # --- END OF FIX ---
         self.event_bus.subscribe("terminal_output_received", executor_panel.append_output)
         logger.info("Executor events wired.")
 
@@ -239,17 +234,19 @@ class EventCoordinator:
         if code_viewer and hasattr(code_viewer, 'editor_manager'):
             editor_manager = code_viewer.editor_manager
 
-            self.event_bus.subscribe("project_scaffold_generated", code_viewer.display_scaffold)
+            # --- NEW: Main event for showing files after generation is complete. ---
+            self.event_bus.subscribe("display_project_files", code_viewer.display_final_files)
+
+            # Events for streaming and fine-grained editor control during generation.
             self.event_bus.subscribe("file_content_updated", editor_manager.create_or_update_tab)
             self.event_bus.subscribe("highlight_lines_for_edit", editor_manager.handle_highlight_lines)
             self.event_bus.subscribe("delete_highlighted_lines", editor_manager.handle_delete_lines)
             self.event_bus.subscribe("stream_text_at_cursor", editor_manager.handle_stream_at_cursor)
             self.event_bus.subscribe("position_cursor", editor_manager.handle_position_cursor)
             self.event_bus.subscribe("finalize_editor_content", editor_manager.handle_finalize_content)
+
+            # Events for managing the "AI is working" state in the editor.
             self.event_bus.subscribe("build_workflow_started", lambda: editor_manager.set_generating_state(True))
-            # --- THIS IS THE FIX ---
-            # The new 'ai_task_started' event now correctly signals the start of any AI task.
-            # We also still listen for the old events for backward compatibility if needed.
             self.event_bus.subscribe("ai_task_started", lambda: editor_manager.set_generating_state(True))
             self.event_bus.subscribe("ai_workflow_finished", lambda: editor_manager.set_generating_state(False))
         else:

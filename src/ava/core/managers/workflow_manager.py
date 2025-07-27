@@ -11,10 +11,7 @@ from src.ava.core.app_state import AppState
 from src.ava.core.event_bus import EventBus
 from src.ava.core.interaction_mode import InteractionMode
 from src.ava.prompts import TEST_HEALER_PROMPT, RUNTIME_HEALER_PROMPT, ANALYST_PROMPT
-# --- THIS IS THE FIX ---
 from src.ava.prompts.master_rules import JSON_OUTPUT_RULE, S_TIER_ENGINEERING_PROTOCOL
-
-# --- END OF FIX ---
 
 if TYPE_CHECKING:
     from src.ava.core.managers.service_manager import ServiceManager
@@ -90,18 +87,18 @@ class WorkflowManager:
         self._last_user_request = user_request
         project_manager = self.service_manager.get_project_manager()
         coordinator = self.service_manager.get_generation_coordinator()
-
-        # --- THIS IS THE FIX ---
-        # Capture the app state *before* generation begins.
         app_state_service = self.service_manager.get_app_state_service()
-        was_bootstrap = app_state_service.get_app_state() == AppState.BOOTSTRAP
-        # --- END OF FIX ---
+        is_bootstrap_mode = app_state_service.get_app_state() == AppState.BOOTSTRAP
 
         final_code = await coordinator.coordinate_generation(existing_files, user_request)
+
         if not final_code:
             self.log("error", "Build workflow failed during code generation.")
             self.event_bus.emit("ai_response_ready", "Sorry, the code generation process failed.")
+            self.event_bus.emit("ai_workflow_finished")  # Ensure banner hides
             return
+
+        # Commit changes to Git
         files_to_write = {k: v for k, v in final_code.items() if v is not None}
         files_to_delete = [k for k, v in final_code.items() if v is None]
         if project_manager and project_manager.git_manager:
@@ -111,16 +108,34 @@ class WorkflowManager:
                 project_manager.delete_items(files_to_delete)
             commit_message = f"AI generation for: {user_request[:70]}"
             project_manager.git_manager.commit_staged_files(commit_message)
-        self.event_bus.emit("workflow_finalized", final_code)
+
+        # --- NEW DISPLAY LOGIC ---
+        files_to_display = {}
+        if is_bootstrap_mode:
+            # For new projects, show all generated files.
+            files_to_display = final_code.copy()
+        else:
+            # For modifications, only show new or changed files.
+            for file, new_content in final_code.items():
+                if file not in existing_files or existing_files.get(file) != new_content:
+                    files_to_display[file] = new_content
+
+        # Filter out __init__.py files from being auto-opened
+        filtered_display = {
+            file: content for file, content in files_to_display.items()
+            if not file.endswith('__init__.py')
+        }
+
+        self.event_bus.emit("display_project_files", filtered_display)
+        # --- END NEW DISPLAY LOGIC ---
+
+        self.event_bus.emit("workflow_finalized", final_code)  # For other services that need the full result
         self.log("success", "Build workflow completed successfully.")
 
-        # --- THIS IS THE FIX ---
-        # After the first successful build, transition the state to MODIFY.
-        if was_bootstrap:
+        if is_bootstrap_mode:
             project_name = self.service_manager.get_project_manager().active_project_name
             app_state_service.set_app_state(AppState.MODIFY, project_name)
             self.log("info", "Initial project creation complete. State transitioned to MODIFY.")
-        # --- END OF FIX ---
 
     def handle_user_request(self, prompt: str, conversation_history: list,
                             image_bytes: Optional[bytes] = None, image_media_type: Optional[str] = None,

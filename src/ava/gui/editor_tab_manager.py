@@ -24,7 +24,7 @@ class EditorTabManager:
         self.project_manager = project_manager
         self.editors: Dict[str, EnhancedCodeEditor] = {}
         self.lsp_client = None
-        self._is_generating = False  # NEW: Flag to suppress diagnostics
+        self._is_generating = False
         self._setup_initial_state()
         self._connect_events()
 
@@ -103,7 +103,27 @@ class EditorTabManager:
         if norm_path not in self.editors:
             self.create_editor_tab(norm_path)
         self.set_editor_content(norm_path, content)
-        self.focus_tab(norm_path)
+        # We no longer automatically focus here, we let the display_final_files method handle it.
+        # self.focus_tab(norm_path)
+
+    def display_final_files(self, files_to_display: Dict[str, str]):
+        """
+        Clears existing tabs and displays only the specified files.
+        This is the primary method for showing generation results.
+        """
+        self.clear_all_tabs()
+        if not files_to_display:
+            self._add_welcome_tab("No files were changed in this modification.")
+            return
+
+        first_file_path = None
+        for path_str, content in files_to_display.items():
+            if first_file_path is None:
+                first_file_path = self._resolve_and_normalize_path(path_str)
+            self.create_or_update_tab(path_str, content)
+
+        if first_file_path:
+            self.focus_tab(first_file_path)
 
     def create_editor_tab(self, norm_path_str: str) -> bool:
         if norm_path_str in self.editors:
@@ -132,7 +152,6 @@ class EditorTabManager:
         if norm_path_str in self.editors:
             editor = self.editors[norm_path_str]
 
-            # --- THIS IS THE NEW, ROBUST FIX ---
             scrollbar = editor.verticalScrollBar()
             original_scroll_value = scrollbar.value()
 
@@ -141,35 +160,23 @@ class EditorTabManager:
             new_line_count = content.count('\n')
             line_diff = new_line_count - old_line_count
 
-            # Surgically replace the content to avoid flicker and resetting the view
             cursor = editor.textCursor()
             cursor.beginEditBlock()
             cursor.select(QTextCursor.SelectionType.Document)
             cursor.insertText(content)
             cursor.endEditBlock()
 
-            # Restore original content state for dirty checking
             editor._original_content = content
             editor._is_dirty = False
 
-            # Adjust scrollbar position intelligently
-            # This is a heuristic that works well for appending content at the end.
-            # A more complex diff would be needed for perfect middle-of-file edits,
-            # but this is a huge improvement over resetting to the top.
             if original_scroll_value == scrollbar.maximum() or original_scroll_value == 0:
-                # If we were at the bottom or top, stay there
                 pass
             else:
-                # Attempt to adjust based on line changes.
-                # A simple approximation: line height * difference in lines.
                 line_height = editor.fontMetrics().height()
                 scrollbar.setValue(original_scroll_value + (line_diff * line_height))
 
-            # --- END OF FIX ---
-
             self._update_tab_title(norm_path_str)
             if self.lsp_client:
-                # Use didChange instead of didOpen for subsequent updates
                 asyncio.create_task(self.lsp_client.did_open(norm_path_str, content))
 
     def stream_content_to_editor(self, filename: str, chunk: str):
@@ -209,6 +216,7 @@ class EditorTabManager:
         try:
             content = file_path.read_text(encoding='utf-8')
             self.create_or_update_tab(norm_path_str, content)
+            self.focus_tab(norm_path_str)
         except Exception as e:
             print(f"[EditorTabManager] Error opening file {file_path}: {e}")
             QMessageBox.warning(self.tab_widget, "Open File Error", f"Could not open file:\n{file_path.name}\n\n{e}")
@@ -291,9 +299,8 @@ class EditorTabManager:
         QMessageBox.critical(self.tab_widget, "Save Error", f"Could not save '{filename}'\nError: {error}")
 
     def handle_diagnostics(self, uri: str, diagnostics: List[Dict[str, Any]]):
-        # --- NEW: The "Quiet Mode" Check ---
         if self._is_generating:
-            return  # Ignore all diagnostics while AI is working
+            return
 
         try:
             file_path = Path(uri.replace("file:///", "").replace("%3A", ":"))
@@ -328,31 +335,27 @@ class EditorTabManager:
             editor.set_cursor_position(line, col)
 
     def handle_stream_at_cursor(self, filename: str, chunk: str):
-        """NEW: Handles streaming text insertion at the current cursor position."""
+        """Handles streaming text insertion at the current cursor position."""
         editor = self._get_editor_for_filename(filename)
         if editor:
             editor.insertPlainText(chunk)
             editor.ensureCursorVisible()
 
     def handle_finalize_content(self, filename: str):
-        """NEW: Marks the editor's current content as 'clean' or 'saved'."""
+        """Marks the editor's current content as 'clean' or 'saved'."""
         editor = self._get_editor_for_filename(filename)
         if editor:
             editor.mark_clean()
 
-    # --- NEW: Methods to control the generation flag ---
     def set_generating_state(self, is_generating: bool):
         """Controls whether to suppress LSP diagnostics."""
         print(f"[EditorTabManager] Setting generating state to: {is_generating}")
         self._is_generating = is_generating
         if not is_generating:
-            # When generation ends, clear old squiggles and re-validate all open files
             for path_str, editor in self.editors.items():
-                editor.set_diagnostics([])  # Clear immediately
-                # Trigger a re-check
+                editor.set_diagnostics([])
                 asyncio.create_task(self.lsp_client.did_open(path_str, editor.toPlainText()))
         else:
-            # When generation starts, clear all squiggles immediately
             for editor in self.editors.values():
                 editor.set_diagnostics([])
 
