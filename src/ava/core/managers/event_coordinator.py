@@ -67,7 +67,7 @@ class EventCoordinator:
         self._wire_lsp_events()
         self._wire_visualizer_events()
         self._wire_test_lab_events()
-        self._wire_executor_events()  # NEW
+        self._wire_executor_events()
 
         # Allows plugins to request core manager instances for advanced operations.
         self.event_bus.subscribe(
@@ -87,9 +87,12 @@ class EventCoordinator:
             return
 
         executor_panel = code_viewer.executor_log_panel
-        # When a command starts, clear the panel.
+        # --- THIS IS THE FIX ---
+        # Decouple clearing from running. Any part of the app can now request a clear.
+        self.event_bus.subscribe("clear_executor_log", executor_panel.clear_output)
+        # The old event still clears the log for backward compatibility with fire-and-forget buttons
         self.event_bus.subscribe("execute_command_requested", lambda command: executor_panel.clear_output())
-        # Append each line of output as it's received.
+        # --- END OF FIX ---
         self.event_bus.subscribe("terminal_output_received", executor_panel.append_output)
         logger.info("Executor events wired.")
 
@@ -121,13 +124,8 @@ class EventCoordinator:
             self.service_manager.project_manager.active_project_path))
         self.event_bus.subscribe("agent_activity_started", visualizer._handle_agent_activity)
         self.event_bus.subscribe("ai_workflow_finished", visualizer._deactivate_all_connections)
-
-        # --- THIS IS THE FIX ---
-        # When a test file is generated, tell the visualizer to refresh its view from the disk.
         self.event_bus.subscribe("test_file_generated", lambda path: visualizer.display_existing_project(
             self.service_manager.project_manager.active_project_path))
-        # --- END OF FIX ---
-
         logger.info("Project Visualizer events wired.")
 
     def _wire_lsp_events(self) -> None:

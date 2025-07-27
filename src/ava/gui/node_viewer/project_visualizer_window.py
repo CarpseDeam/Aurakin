@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QMainWindow,
     QMenu,
+    QWidget,
+    QHBoxLayout,
 )
 
 from src.ava.core.event_bus import EventBus
@@ -36,6 +38,7 @@ from src.ava.gui.components import Colors
 from src.ava.gui.node_viewer.project_node import ProjectNode
 from src.ava.gui.node_viewer.animated_connection import AnimatedConnection
 from src.ava.services.code_structure_service import CodeStructureService
+from src.ava.gui.node_viewer.project_actions_sidebar import ProjectActionsSidebar
 
 logger = logging.getLogger(__name__)
 
@@ -79,16 +82,30 @@ class ProjectVisualizerWindow(QMainWindow):
         self._active_connections: List[AnimatedConnection] = []
         self._animation_group = QParallelAnimationGroup()
 
-        self.setWindowTitle("Project Visualizer (Test Lab)")
-        self.setGeometry(150, 150, 1200, 800)
+        self.setWindowTitle("Project Visualizer & Test Lab")
+        self.setGeometry(150, 150, 1400, 800)  # Made wider for the sidebar
         self.scene = QGraphicsScene()
         self.scene.setBackgroundBrush(QColor(Colors.PRIMARY_BG))
+
+        # --- Main Layout with Sidebar ---
+        central_widget = QWidget()
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         self.view = ZoomableView(self.scene, self)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
         self.view.customContextMenuRequested.connect(self._show_context_menu)
-        self.setCentralWidget(self.view)
+        main_layout.addWidget(self.view, 1)  # Graphics view takes up expanding space
+
+        self.sidebar = ProjectActionsSidebar(event_bus, project_manager)
+        main_layout.addWidget(self.sidebar)
+
+        self.setCentralWidget(central_widget)
+
+        # Connect event to update sidebar
+        self.event_bus.subscribe("command_execution_finished", self.sidebar.update_on_command_finish)
 
     def _is_root_node(self, item: ProjectNode) -> bool:
         """Checks if the given node is the root project node."""
@@ -105,10 +122,10 @@ class ProjectVisualizerWindow(QMainWindow):
         menu = QMenu(self.view)
         rel_path = Path(item.path).relative_to(self.project_manager.active_project_path).as_posix()
 
-        # Action: Run Program
+        # Action: Run Program (Individual File)
         if item.node_type == 'file' and item.name.endswith('.py'):
             command_to_run = f"python {rel_path}"
-            action = menu.addAction(f"▶️ Run Program")
+            action = menu.addAction(f"▶️ Run {item.name}")
             action.triggered.connect(
                 lambda checked=False, cmd=command_to_run: self.event_bus.emit("run_program_and_heal_requested", cmd)
             )
@@ -160,6 +177,9 @@ class ProjectVisualizerWindow(QMainWindow):
             self._clear_scene()
             return
         self._render_project_structure(project_files)
+        # When a project is loaded, ensure the sidebar is ready
+        self.sidebar.hide_heal_button()
+        self.sidebar.status_label.setText("Ready")
 
     def _render_project_structure(self, project_files: Dict[str, str]):
         self._clear_scene()
@@ -209,7 +229,7 @@ class ProjectVisualizerWindow(QMainWindow):
 
             node = ProjectNode(name, current_path_str, node_type)
             node_key = _normalize_path_key(current_path_str) if node_type in ['file',
-                                                                             'folder'] else f"{_normalize_path_key(current_path_str)}::{name}"
+                                                                              'folder'] else f"{_normalize_path_key(current_path_str)}::{name}"
             self._setup_new_node(node, parent_node, node_key)
 
             structure = children.get('__structure__')
@@ -276,7 +296,7 @@ class ProjectVisualizerWindow(QMainWindow):
 
         def layout_recursively(node: ProjectNode, depth: int):
             node_key = _normalize_path_key(node.path) if node.node_type in ['file',
-                                                                           'folder'] else f"{_normalize_path_key(node.path)}::{node.name}"
+                                                                            'folder'] else f"{_normalize_path_key(node.path)}::{node.name}"
 
             x = depth * COLUMN_WIDTH
             y = y_map[depth] * ROW_HEIGHT

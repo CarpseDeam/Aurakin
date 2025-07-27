@@ -239,7 +239,7 @@ class WorkflowManager:
     async def _run_program_and_heal_workflow(self, command: str):
         execution_service = self.service_manager.get_execution_service()
         self.event_bus.emit("agent_status_changed", "Executor", f"Running '{command}'...", "fa5s.play")
-        self.event_bus.emit("execute_command_requested", command)
+        # The direct call is the single source of truth for execution.
         exit_code, runtime_output = await execution_service.execute_and_capture(command)
         if exit_code == 0:
             self.log("success", "Program ran successfully! No healing needed.")
