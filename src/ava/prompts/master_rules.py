@@ -35,6 +35,16 @@ ARCHITECT_DESIGN_PROTOCOL = textwrap.dedent("""
         -   AVOID creating redundant public members. For example, in a calculator, plan for EITHER individual functions (`add`, `subtract`) OR a single `calculate` function, but NEVER both. Choose the simplest path that achieves the goal.
 """)
 
+# --- NEW: A protocol for handling test environments and execution ---
+TESTING_AND_EXECUTION_PROTOCOL = textwrap.dedent("""
+    **LAW: TESTING & EXECUTION PROTOCOL - CRITICAL FOR GUI & TEST-RELATED FIXES.**
+
+    1.  **BEWARE THE `pytest-qt` ENVIRONMENT:** When fixing failures from `pytest` involving a GUI application (like PySide6 or PyQt), the test runner (`pytest`) already creates and manages a `QApplication` instance.
+    2.  **NEVER CREATE A DUPLICATE `QApplication`:** The application's `main()` function MUST NOT create a new `QApplication` if one already exists. The correct pattern is: `app = QApplication.instance() or QApplication(sys.argv)`.
+    3.  **DO NOT BLOCK THE TEST RUNNER:** The `main()` function MUST NOT call `app.exec()` or `sys.exit()` when running inside a test. This will cause the test to hang indefinitely. The event loop MUST be guarded. The correct pattern is: `if 'pytest' not in sys.modules: sys.exit(app.exec())`. This ensures the application only enters its event loop when run directly, not when being tested.
+""")
+
+
 # --- (The S_TIER_ENGINEERING_PROTOCOL remains the same) ---
 S_TIER_ENGINEERING_PROTOCOL = textwrap.dedent("""
     **LAW: S-TIER ENGINEERING PROTOCOL - YOU MUST ADHERE TO THESE AT ALL TIMES.**

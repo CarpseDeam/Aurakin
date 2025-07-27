@@ -1,6 +1,6 @@
 # src/ava/prompts/tester.py
 import textwrap
-from .master_rules import RAW_CODE_OUTPUT_RULE, S_TIER_ENGINEERING_PROTOCOL
+from .master_rules import RAW_CODE_OUTPUT_RULE, S_TIER_ENGINEERING_PROTOCOL, TESTING_AND_EXECUTION_PROTOCOL
 
 # This prompt is for generating a test for a SINGLE function.
 TESTER_PROMPT = textwrap.dedent(f"""
@@ -31,7 +31,11 @@ TESTER_PROMPT = textwrap.dedent(f"""
     **LAW #3: DO NOT USE PLACEHOLDERS.**
     - Both test functions must be fully implemented and functional. Do not use `pass`, `...`, or comments like `# TODO`.
 
-    **LAW #4: ENSURE DEPENDENCIES ARE LISTED.**
+    **LAW #4: ADHERE TO THE TESTING & EXECUTION PROTOCOL.**
+    If the code being tested is part of a GUI application, you must follow the rules for handling the QApplication lifecycle to avoid test hangs.
+    {TESTING_AND_EXECUTION_PROTOCOL}
+
+    **LAW #5: ENSURE DEPENDENCIES ARE LISTED.**
     - You MUST also generate a `requirements.txt` file.
     - This file MUST contain `pytest`.
     - To do this, after your Python code block, add the following separator and the `requirements.txt` content:
@@ -61,7 +65,6 @@ TESTER_PROMPT = textwrap.dedent(f"""
     Execute your mission. Write the complete pytest file for the function `{{function_name}}` now.
     """)
 
-
 # --- NEW PROMPT for generating tests for an ENTIRE file ---
 FILE_TESTER_PROMPT = textwrap.dedent(f"""
     You are an expert Python Test Engineer specializing in `pytest`. Your sole mission is to write a comprehensive, professional, and functional `pytest` test file that covers all public functions and classes in a given source file.
@@ -85,12 +88,16 @@ FILE_TESTER_PROMPT = textwrap.dedent(f"""
     Your test code must be robust, modern, and maintainable.
     {S_TIER_ENGINEERING_PROTOCOL}
 
-    **LAW #3: WRITE A COMPLETE AND RUNNABLE PYTEST FILE.**
+    **LAW #3: ADHERE TO THE TESTING & EXECUTION PROTOCOL.**
+    If the code being tested is part of a GUI application, you must follow the rules for handling the QApplication lifecycle to avoid test hangs.
+    {TESTING_AND_EXECUTION_PROTOCOL}
+
+    **LAW #4: WRITE A COMPLETE AND RUNNABLE PYTEST FILE.**
     - Your response MUST be a single, complete Python file.
     - It MUST start with all necessary imports (e.g., `import pytest`, `from {{module_path}} import ...`).
     - Use pytest fixtures for setup (`@pytest.fixture`) where it makes sense to reduce code duplication.
 
-    **LAW #4: ENSURE DEPENDENCIES ARE LISTED.**
+    **LAW #5: ENSURE DEPENDENCIES ARE LISTED.**
     - After your Python code block, you MUST generate a `requirements.txt` file.
     - This file MUST contain `pytest`. If the code uses other libraries (e.g., `requests`), add them as well.
     - Add the separator and the `requirements.txt` content like this:

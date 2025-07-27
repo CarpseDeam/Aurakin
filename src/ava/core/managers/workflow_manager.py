@@ -10,7 +10,7 @@ from pathlib import Path
 from src.ava.core.app_state import AppState
 from src.ava.core.event_bus import EventBus
 from src.ava.core.interaction_mode import InteractionMode
-from src.ava.prompts import TEST_HEALER_PROMPT, RUNTIME_HEALER_PROMPT
+from src.ava.prompts import TEST_HEALER_PROMPT, RUNTIME_HEALER_PROMPT, ANALYST_PROMPT
 
 if TYPE_CHECKING:
     from src.ava.core.managers.service_manager import ServiceManager
@@ -246,7 +246,12 @@ class WorkflowManager:
         if failing_file and failing_file in files_for_prompt:
             self.log("info", f"Redacting failing test file '{failing_file}' from Healer's context to prevent cheating.")
             files_for_prompt[failing_file] = "[This is the failing test file. Its content is locked and cannot be modified. You MUST fix the bug in the source code to make this test pass.]"
-        await self._run_generic_heal_workflow(TEST_HEALER_PROMPT, {"test_output": test_output}, files_for_prompt)
+        await self._run_generic_heal_workflow(
+            prompt_template=TEST_HEALER_PROMPT,
+            error_output=test_output,
+            files_for_prompt=files_for_prompt,
+            context_key="test_output"
+        )
         self.event_bus.emit("ai_workflow_finished")
 
     def handle_run_and_heal_request(self, command: str):
@@ -257,7 +262,6 @@ class WorkflowManager:
     async def _run_program_and_heal_workflow(self, command: str):
         execution_service = self.service_manager.get_execution_service()
         self.event_bus.emit("agent_status_changed", "Executor", f"Running '{command}'...", "fa5s.play")
-        # The direct call is the single source of truth for execution.
         exit_code, runtime_output = await execution_service.execute_and_capture(command)
         if exit_code == 0:
             self.log("success", "Program ran successfully! No healing needed.")
@@ -267,7 +271,7 @@ class WorkflowManager:
         files_for_prompt = self.service_manager.get_project_manager().get_project_files()
         if "SyntaxError:" in runtime_output:
             self.log("warning", "SyntaxError detected. Attempting to fix syntax first.")
-            await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, {"runtime_traceback": runtime_output}, files_for_prompt)
+            await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, runtime_output, files_for_prompt, "runtime_traceback")
             self.event_bus.emit("terminal_output_received", "\n--- Syntax error fixed. Please try running the program again. ---")
             self.event_bus.emit("ai_workflow_finished")
             return
@@ -293,41 +297,56 @@ class WorkflowManager:
                                     "\n--- Failed to install dependencies. Please check the error log above. ---")
             self.event_bus.emit("ai_workflow_finished")
             return
-        await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, {"runtime_traceback": runtime_output}, files_for_prompt)
+        await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, runtime_output, files_for_prompt, "runtime_traceback")
         self.event_bus.emit("ai_workflow_finished")
 
-    async def _run_generic_heal_workflow(self, prompt_template: str, context: Dict[str, str],
-                                         files_for_prompt: Dict[str, str]):
+    async def _run_generic_heal_workflow(self, prompt_template: str, error_output: str, files_for_prompt: Dict[str, str], context_key: str):
         self.log("warning", "A failure was detected. Engaging Healer Agent.")
-        self.event_bus.emit("agent_status_changed", "Healer", "Failure detected, attempting to fix...",
-                            "fa5s.heartbeat")
         project_manager = self.service_manager.get_project_manager()
         llm_client = self.service_manager.get_llm_client()
-        from src.ava.services import ResponseValidatorService
-        validator = ResponseValidatorService()
+        validator = self.service_manager.get_generation_coordinator().validator
 
-        # --- NEW: Show Healer agent analyzing the project root BEFORE thinking ---
         if project_manager.active_project_path:
             self.event_bus.emit("agent_activity_started", "Healer", str(project_manager.active_project_path))
-        # --- END NEW ---
 
-        prompt_context = {
+        # --- STEP 1: ANALYSIS ---
+        self.event_bus.emit("agent_status_changed", "Healer", "Analyzing root cause...", "fa5s.search")
+        analysis_prompt = ANALYST_PROMPT.format(error_output=error_output, existing_files_json=json.dumps(files_for_prompt, indent=2))
+        analysis_response_stream = llm_client.stream_chat(*llm_client.get_model_for_role("architect"), analysis_prompt, "healer")
+        full_analysis_response = "".join([chunk async for chunk in analysis_response_stream])
+
+        parsed_analysis = validator.extract_and_parse_json(full_analysis_response)
+        bug_analysis = parsed_analysis.get("analysis") if parsed_analysis else None
+
+        if not bug_analysis:
+            self.log("error", f"Healer's Analyst failed to determine root cause. Response: {full_analysis_response[:300]}")
+            return
+
+        self.log("info", f"Healer Analysis Complete: {bug_analysis}")
+
+        # --- STEP 2: CORRECTION ---
+        self.event_bus.emit("agent_status_changed", "Healer", "Implementing fix...", "fa5s.magic")
+        healer_context = {
             "user_request": self._last_user_request or "The user's last request was to fix a failure.",
             "existing_files_json": json.dumps(files_for_prompt, indent=2),
-            **context
+            "bug_analysis": bug_analysis,
+            context_key: error_output
         }
-        healer_prompt = prompt_template.format(**prompt_context)
-        healer_response_stream = llm_client.stream_chat(
-            *llm_client.get_model_for_role("architect"), healer_prompt, "healer"
-        )
+        healer_prompt = prompt_template.format(**healer_context)
+        healer_response_stream = llm_client.stream_chat(*llm_client.get_model_for_role("coder"), healer_prompt, "healer")
         full_healer_response = "".join([chunk async for chunk in healer_response_stream])
-        if not full_healer_response:
-            self.log("error", "Healer agent returned an empty response. Aborting fix.")
+
+        if not full_healer_response or full_healer_response.strip().startswith(("LLM_API_ERROR:", "SERVER_ERROR:")):
+            error_reason = full_healer_response.replace("LLM_API_ERROR:", "").replace("SERVER_ERROR:", "").strip()
+            self.log("error", f"Healer agent returned an API error during correction: {error_reason}")
             return
+
         rewritten_files = validator.extract_and_parse_json(full_healer_response)
         if not isinstance(rewritten_files, dict) or not rewritten_files:
             self.log("error", f"Healer failed to return a valid JSON fix. Response: {full_healer_response[:300]}")
             return
+
+        # --- STEP 3: APPLY FIX ---
         self.log("success", f"Healer has provided a fix for {len(rewritten_files)} file(s). Applying changes...")
         final_code = project_manager.get_project_files().copy()
         for filename, new_content in rewritten_files.items():
@@ -346,10 +365,12 @@ class WorkflowManager:
             self.event_bus.emit("finalize_editor_content", filename)
             final_code[filename] = sanitized_content
             await asyncio.sleep(0.5)
+
         if project_manager.git_manager:
             sanitized_rewrites = {fname: self._sanitize_code_output(content) for fname, content in rewritten_files.items()}
             project_manager.git_manager.write_and_stage_files(sanitized_rewrites)
             project_manager.git_manager.commit_staged_files("fix: AI Healer applied automated fix")
+
         self.event_bus.emit("workflow_finalized", final_code)
         self.log("success", "✅ Healer workflow finished. Please review the fix and run again.")
 

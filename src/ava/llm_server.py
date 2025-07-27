@@ -20,6 +20,7 @@ except ImportError:
     openai = None
 try:
     import google.generativeai as genai
+    from google.generativeai.types import HarmCategory, HarmBlockThreshold
     from PIL import Image
     import io
 except ImportError:
@@ -159,21 +160,15 @@ async def _stream_openai_compatible(client, model, prompt, temp, image_b64, medi
         model=model, messages=messages, stream=True, temperature=temp, max_tokens=8192
     )
 
-    # --- THIS IS THE FIX ---
-    # We now track if any content has been sent.
     content_sent = False
     async for chunk in stream:
         if chunk.choices and chunk.choices[0].delta and (content := chunk.choices[0].delta.content):
             content_sent = True
-            # Yield character by character for a smooth typewriter effect.
             for char in content:
                 yield char
 
-    # If the stream finishes and we never sent anything, yield a single space.
-    # This prevents the `StopAsyncIteration` error for empty responses.
     if not content_sent:
         yield " "
-    # --- END OF FIX ---
 
 
 async def _stream_google(client, model, prompt, temp, image_b64, media_type, history):
@@ -183,22 +178,55 @@ async def _stream_google(client, model, prompt, temp, image_b64, media_type, his
     if prompt: content_parts.append(prompt)
     if image_b64: content_parts.append(Image.open(io.BytesIO(base64.b64decode(image_b64))))
 
-    response_stream = await chat_session.send_message_async(content_parts, stream=True,
-                                                            generation_config=genai.types.GenerationConfig(
-                                                                temperature=temp,
-                                                                max_output_tokens=8192
-                                                            ))
+    safety_settings = {
+        HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+        HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+    }
 
-    # --- THIS IS THE FIX ---
+    try:
+        response_stream = await chat_session.send_message_async(
+            content_parts,
+            stream=True,
+            generation_config=genai.types.GenerationConfig(
+                temperature=temp,
+                max_output_tokens=8192
+            ),
+            safety_settings=safety_settings
+        )
+    except Exception as e:
+        yield f"LLM_API_ERROR: {str(e)}"
+        return
+
     content_sent = False
-    async for chunk in response_stream:
-        if chunk.text:
-            content_sent = True
-            for char in chunk.text:
-                yield char
-    if not content_sent:
+    full_response = None
+    try:
+        # --- THIS IS THE FIX ---
+        # The response_stream object is an async iterator. We consume it here.
+        # The library also populates the same object with the final response details.
+        async for chunk in response_stream:
+            if not chunk.parts:
+                continue
+            if chunk.text:
+                content_sent = True
+                for char in chunk.text:
+                    yield char
+        # After the loop, the `response_stream` object now holds the final metadata
+        full_response = response_stream
+        # --- END OF FIX ---
+    except Exception as e:
+        yield f"LLM_API_ERROR: {str(e)}"
+        return
+
+    if not content_sent and full_response:
+        finish_reason = full_response.candidates[0].finish_reason
+        if finish_reason.name == "SAFETY":
+            yield "LLM_API_ERROR: Response was blocked by Google's safety filters. The prompt may have been too sensitive."
+        else:
+            yield "LLM_API_ERROR: Received an empty response from the API. Finish Reason: " + finish_reason.name
+    elif not content_sent:
         yield " "
-    # --- END OF FIX ---
 
 
 async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, history):
@@ -223,7 +251,6 @@ async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, 
         if anthropic_content:
             anthropic_messages.append({"role": msg['role'], "content": anthropic_content})
 
-    # --- THIS IS THE FIX ---
     content_sent = False
     async with client.messages.stream(max_tokens=8192, model=model, messages=anthropic_messages,
                                       temperature=temp) as stream:
@@ -234,7 +261,6 @@ async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, 
                     yield char
     if not content_sent:
         yield " "
-    # --- END OF FIX ---
 
 
 async def _stream_ollama(client, model, prompt, temp, image_b64, media_type, history):
@@ -251,7 +277,6 @@ async def _stream_ollama(client, model, prompt, temp, image_b64, media_type, his
     ollama_url = os.getenv("OLLAMA_API_BASE", "http://127.0.0.1:11434") + "/api/chat"
     payload = {"model": model, "messages": messages, "stream": True, "options": {"temperature": temp}}
 
-    # --- THIS IS THE FIX ---
     content_sent = False
     async with aiohttp.ClientSession() as session:
         async with session.post(ollama_url, json=payload) as resp:
@@ -264,7 +289,6 @@ async def _stream_ollama(client, model, prompt, temp, image_b64, media_type, his
                             yield char
     if not content_sent:
         yield " "
-    # --- END OF FIX ---
 
 
 # --- API Endpoints ---
@@ -298,7 +322,7 @@ async def stream_chat_endpoint(request: StreamChatRequest):
                     yield chunk
         except Exception as e:
             print(f"Error streaming from {request.provider}: {e}", file=sys.stderr)
-            yield f"SERVER_ERROR: {e}"
+            yield f"LLM_API_ERROR: {e}"
 
     return StreamingResponse(generator(), media_type="text/plain")
 
