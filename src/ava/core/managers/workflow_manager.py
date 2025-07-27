@@ -11,6 +11,10 @@ from src.ava.core.app_state import AppState
 from src.ava.core.event_bus import EventBus
 from src.ava.core.interaction_mode import InteractionMode
 from src.ava.prompts import TEST_HEALER_PROMPT, RUNTIME_HEALER_PROMPT, ANALYST_PROMPT
+# --- THIS IS THE FIX ---
+from src.ava.prompts.master_rules import JSON_OUTPUT_RULE, S_TIER_ENGINEERING_PROTOCOL
+
+# --- END OF FIX ---
 
 if TYPE_CHECKING:
     from src.ava.core.managers.service_manager import ServiceManager
@@ -86,6 +90,13 @@ class WorkflowManager:
         self._last_user_request = user_request
         project_manager = self.service_manager.get_project_manager()
         coordinator = self.service_manager.get_generation_coordinator()
+
+        # --- THIS IS THE FIX ---
+        # Capture the app state *before* generation begins.
+        app_state_service = self.service_manager.get_app_state_service()
+        was_bootstrap = app_state_service.get_app_state() == AppState.BOOTSTRAP
+        # --- END OF FIX ---
+
         final_code = await coordinator.coordinate_generation(existing_files, user_request)
         if not final_code:
             self.log("error", "Build workflow failed during code generation.")
@@ -103,6 +114,14 @@ class WorkflowManager:
         self.event_bus.emit("workflow_finalized", final_code)
         self.log("success", "Build workflow completed successfully.")
 
+        # --- THIS IS THE FIX ---
+        # After the first successful build, transition the state to MODIFY.
+        if was_bootstrap:
+            project_name = self.service_manager.get_project_manager().active_project_name
+            app_state_service.set_app_state(AppState.MODIFY, project_name)
+            self.log("info", "Initial project creation complete. State transitioned to MODIFY.")
+        # --- END OF FIX ---
+
     def handle_user_request(self, prompt: str, conversation_history: list,
                             image_bytes: Optional[bytes] = None, image_media_type: Optional[str] = None,
                             code_context: Optional[Dict[str, str]] = None):
@@ -114,14 +133,14 @@ class WorkflowManager:
         if interaction_mode == InteractionMode.PLAN:
             workflow_coroutine = self._run_chat_workflow(prompt, conversation_history)
         elif interaction_mode == InteractionMode.BUILD:
-            self.event_bus.emit("ai_task_started") # <-- For the thinking banner
+            self.event_bus.emit("ai_task_started")  # <-- For the thinking banner
             existing_files = self.service_manager.get_project_manager().get_project_files() if app_state == AppState.MODIFY else None
             workflow_coroutine = self._run_build_workflow(prompt, existing_files)
         if workflow_coroutine:
             self.task_manager.start_ai_workflow_task(workflow_coroutine)
 
     def handle_test_generation_request(self, function_name: str, source_file_path_str: str):
-        self.event_bus.emit("ai_task_started") # <-- For the thinking banner
+        self.event_bus.emit("ai_task_started")  # <-- For the thinking banner
         self.task_manager.start_ai_workflow_task(
             self._run_single_function_test_workflow(function_name, source_file_path_str)
         )
@@ -143,11 +162,11 @@ class WorkflowManager:
             function_code = extractor_service.extract_code_block(file_content, function_name)
             if not function_code:
                 self.log("error", f"Code Extractor failed to find function '{function_name}'.")
-                self.event_bus.emit("ai_workflow_finished") # Ensure banner hides on failure
+                self.event_bus.emit("ai_workflow_finished")  # Ensure banner hides on failure
                 return
         except Exception as e:
             self.log("error", f"Failed to read or extract from source file: {e}")
-            self.event_bus.emit("ai_workflow_finished") # Ensure banner hides on failure
+            self.event_bus.emit("ai_workflow_finished")  # Ensure banner hides on failure
             return
         relative_source_path = source_file_path.relative_to(project_manager.active_project_path).as_posix()
         generated_assets = await test_generation_service.generate_test_for_function(
@@ -157,7 +176,7 @@ class WorkflowManager:
         self.event_bus.emit("ai_workflow_finished")
 
     def handle_file_test_generation_request(self, source_file_rel_path: str):
-        self.event_bus.emit("ai_task_started") # <-- For the thinking banner
+        self.event_bus.emit("ai_task_started")  # <-- For the thinking banner
         self.task_manager.start_ai_workflow_task(
             self._run_full_file_test_workflow(source_file_rel_path)
         )
@@ -177,7 +196,7 @@ class WorkflowManager:
             file_content = source_file_abs_path.read_text(encoding='utf-8')
         except Exception as e:
             self.log("error", f"Failed to read source file '{source_file_abs_path.name}': {e}")
-            self.event_bus.emit("ai_workflow_finished") # Ensure banner hides on failure
+            self.event_bus.emit("ai_workflow_finished")  # Ensure banner hides on failure
             return
         generated_assets = await test_generation_service.generate_tests_for_file(
             file_content, source_file_rel_path
@@ -216,7 +235,7 @@ class WorkflowManager:
 
     def handle_test_heal_request(self):
         self.log("info", "Test-based Heal request received. Starting Heal workflow.")
-        self.event_bus.emit("ai_task_started") # <-- For the thinking banner
+        self.event_bus.emit("ai_task_started")  # <-- For the thinking banner
         self.task_manager.start_ai_workflow_task(self._run_test_heal_workflow())
 
     def _find_failing_test_file(self, pytest_output: str) -> Optional[str]:
@@ -245,7 +264,8 @@ class WorkflowManager:
         files_for_prompt = project_manager.get_project_files()
         if failing_file and failing_file in files_for_prompt:
             self.log("info", f"Redacting failing test file '{failing_file}' from Healer's context to prevent cheating.")
-            files_for_prompt[failing_file] = "[This is the failing test file. Its content is locked and cannot be modified. You MUST fix the bug in the source code to make this test pass.]"
+            files_for_prompt[
+                failing_file] = "[This is the failing test file. Its content is locked and cannot be modified. You MUST fix the bug in the source code to make this test pass.]"
         await self._run_generic_heal_workflow(
             prompt_template=TEST_HEALER_PROMPT,
             error_output=test_output,
@@ -256,7 +276,7 @@ class WorkflowManager:
 
     def handle_run_and_heal_request(self, command: str):
         self.log("info", f"Run & Heal request received for command: '{command}'")
-        self.event_bus.emit("ai_task_started") # <-- For the thinking banner
+        self.event_bus.emit("ai_task_started")  # <-- For the thinking banner
         self.task_manager.start_ai_workflow_task(self._run_program_and_heal_workflow(command))
 
     async def _run_program_and_heal_workflow(self, command: str):
@@ -271,8 +291,10 @@ class WorkflowManager:
         files_for_prompt = self.service_manager.get_project_manager().get_project_files()
         if "SyntaxError:" in runtime_output:
             self.log("warning", "SyntaxError detected. Attempting to fix syntax first.")
-            await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, runtime_output, files_for_prompt, "runtime_traceback")
-            self.event_bus.emit("terminal_output_received", "\n--- Syntax error fixed. Please try running the program again. ---")
+            await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, runtime_output, files_for_prompt,
+                                                  "runtime_traceback")
+            self.event_bus.emit("terminal_output_received",
+                                "\n--- Syntax error fixed. Please try running the program again. ---")
             self.event_bus.emit("ai_workflow_finished")
             return
         if "ModuleNotFoundError" in runtime_output:
@@ -297,10 +319,12 @@ class WorkflowManager:
                                     "\n--- Failed to install dependencies. Please check the error log above. ---")
             self.event_bus.emit("ai_workflow_finished")
             return
-        await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, runtime_output, files_for_prompt, "runtime_traceback")
+        await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, runtime_output, files_for_prompt,
+                                              "runtime_traceback")
         self.event_bus.emit("ai_workflow_finished")
 
-    async def _run_generic_heal_workflow(self, prompt_template: str, error_output: str, files_for_prompt: Dict[str, str], context_key: str):
+    async def _run_generic_heal_workflow(self, prompt_template: str, error_output: str,
+                                         files_for_prompt: Dict[str, str], context_key: str):
         self.log("warning", "A failure was detected. Engaging Healer Agent.")
         project_manager = self.service_manager.get_project_manager()
         llm_client = self.service_manager.get_llm_client()
@@ -311,15 +335,21 @@ class WorkflowManager:
 
         # --- STEP 1: ANALYSIS ---
         self.event_bus.emit("agent_status_changed", "Healer", "Analyzing root cause...", "fa5s.search")
-        analysis_prompt = ANALYST_PROMPT.format(error_output=error_output, existing_files_json=json.dumps(files_for_prompt, indent=2))
-        analysis_response_stream = llm_client.stream_chat(*llm_client.get_model_for_role("architect"), analysis_prompt, "healer")
+        analysis_prompt = ANALYST_PROMPT.format(
+            error_output=error_output,
+            existing_files_json=json.dumps(files_for_prompt, indent=2),
+            JSON_OUTPUT_RULE=JSON_OUTPUT_RULE
+        )
+        analysis_response_stream = llm_client.stream_chat(*llm_client.get_model_for_role("architect"), analysis_prompt,
+                                                          "healer")
         full_analysis_response = "".join([chunk async for chunk in analysis_response_stream])
 
         parsed_analysis = validator.extract_and_parse_json(full_analysis_response)
         bug_analysis = parsed_analysis.get("analysis") if parsed_analysis else None
 
         if not bug_analysis:
-            self.log("error", f"Healer's Analyst failed to determine root cause. Response: {full_analysis_response[:300]}")
+            self.log("error",
+                     f"Healer's Analyst failed to determine root cause. Response: {full_analysis_response[:300]}")
             return
 
         self.log("info", f"Healer Analysis Complete: {bug_analysis}")
@@ -330,10 +360,13 @@ class WorkflowManager:
             "user_request": self._last_user_request or "The user's last request was to fix a failure.",
             "existing_files_json": json.dumps(files_for_prompt, indent=2),
             "bug_analysis": bug_analysis,
-            context_key: error_output
+            context_key: error_output,
+            "S_TIER_ENGINEERING_PROTOCOL": S_TIER_ENGINEERING_PROTOCOL,
+            "JSON_OUTPUT_RULE": JSON_OUTPUT_RULE
         }
         healer_prompt = prompt_template.format(**healer_context)
-        healer_response_stream = llm_client.stream_chat(*llm_client.get_model_for_role("coder"), healer_prompt, "healer")
+        healer_response_stream = llm_client.stream_chat(*llm_client.get_model_for_role("coder"), healer_prompt,
+                                                        "healer")
         full_healer_response = "".join([chunk async for chunk in healer_response_stream])
 
         if not full_healer_response or full_healer_response.strip().startswith(("LLM_API_ERROR:", "SERVER_ERROR:")):
@@ -367,7 +400,8 @@ class WorkflowManager:
             await asyncio.sleep(0.5)
 
         if project_manager.git_manager:
-            sanitized_rewrites = {fname: self._sanitize_code_output(content) for fname, content in rewritten_files.items()}
+            sanitized_rewrites = {fname: self._sanitize_code_output(content) for fname, content in
+                                  rewritten_files.items()}
             project_manager.git_manager.write_and_stage_files(sanitized_rewrites)
             project_manager.git_manager.commit_staged_files("fix: AI Healer applied automated fix")
 

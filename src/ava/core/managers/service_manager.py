@@ -1,4 +1,4 @@
-# src/ava/core/managers/service_manager.py
+# src/ava/services/service_manager.py
 from __future__ import annotations
 import sys
 import subprocess

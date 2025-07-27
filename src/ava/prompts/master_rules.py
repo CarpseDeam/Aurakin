@@ -16,34 +16,42 @@ RAW_CODE_OUTPUT_RULE = """
 - Do not write any explanations, comments, or markdown before or after the code.
 """
 
-# --- FINAL, REFINED: ARCHITECT'S PROTOCOL ---
-ARCHITECT_DESIGN_PROTOCOL = textwrap.dedent("""
-    **LAW: ARCHITECTURAL DESIGN PROTOCOL - YOU MUST ADHERE TO THESE AT ALL TIMES.**
+# --- NEW: The Senior Architect Protocol ---
+SENIOR_ARCHITECT_PROTOCOL = textwrap.dedent("""
+    1.  **OBJECT-ORIENTED BY DEFAULT:**
+        -   All state and related logic MUST be encapsulated within classes. Avoid procedural scripts with loose functions for anything beyond a simple, single-purpose tool.
+        -   Identify the core nouns in the user request; these are your candidate classes (e.g., "Web Scraper" -> `WebScraper` class, "User Data" -> `User` class).
+
+    2.  **MANDATORY PYDANTIC MODELS FOR DATA:**
+        -   Any structured data that is passed between components or returned from functions MUST be defined as a `pydantic.BaseModel`. This is non-negotiable for data validation and clear contracts.
+
+    3.  **CONFIGURATION & DEPENDENCY INJECTION:**
+        -   **No Hard-coded Values:** Magic numbers, URLs, file paths, or API keys are forbidden. Plan for a dedicated configuration object or file (`config.py`).
+        -   **Inject, Don't Create:** Components MUST receive their dependencies (like clients, services, or configuration objects) in their `__init__` method. They should NOT create their own dependencies internally. This is critical for testability and modularity.
+
+    4.  **SINGLE RESPONSIBILITY & DRY:**
+        -   Each class and module MUST have one, and only one, clear responsibility.
+        -   If you identify a repeated task, plan for a shared utility module or a base class. Do not repeat logic.
+""")
+
+# --- RENAMED & REFINED: The protocol for file planning ---
+FILE_PLANNER_PROTOCOL = textwrap.dedent("""
+    **LAW: FILE PLANNING PROTOCOL - YOU MUST ADHERE TO THESE AT ALL TIMES.**
 
     1.  **MAINTAINABILITY & CLARITY:**
-        -   **Single Responsibility Principle (SRP):** Every file should have one clear purpose.
-        -   **Descriptive Naming:** Use clear, unambiguous names for files and modules.
-        -   **Modularity & Clean Entry Points:** Group related functions into modules. The main entry point (`main.py`) MUST be minimal.
-        -   **The `main.py` file is ONLY a launcher.** It should contain almost no logic itself. Its sole purpose is to import the primary function from another module (e.g., a `cli` or `app` module) and execute it, usually within a `if __name__ == "__main__":` block.
+        -   **Single Responsibility Principle (SRP):** Every file should have one clear purpose, as dictated by the high-level architectural plan.
+        -   **Descriptive Naming:** Use clear, unambiguous names for files and modules that reflect the components in the plan.
+        -   **Modularity & Clean Entry Points:** Group related classes into modules. The main entry point (`main.py`) MUST be minimal.
+        -   **The `main.py` file is ONLY a launcher.** Its sole purpose is to instantiate the main application class and run it, usually within a `if __name__ == "__main__":` block.
 
-    2.  **PROFESSIONAL SIGNATURES:**
-        -   **Mandatory Type Hinting:** All function and method signatures MUST include type hints for all arguments and for the return value. Use the `typing` module where necessary.
-        -   **Comprehensive Docstrings:** Every module, class, and public function MUST have a comprehensive, Google-style docstring. Module docstrings describe the file's purpose. Function/method docstrings must describe the purpose, `Args:`, and `Returns:`.
+    2.  **PYTHON PACKAGING & TESTING:**
+        -   For any source directory you create (like 'src', 'src/components'), you MUST include an `__init__.py` file.
+        -   You MUST include a `requirements.txt` file in the root. At a minimum, it must contain `pytest`. If the plan calls for Pydantic, it must also be included.
 
-    3.  **SINGLE PATH OF EXECUTION:**
-        -   When defining interfaces, provide only ONE primary function for a given task.
-        -   AVOID creating redundant public members. For example, in a calculator, plan for EITHER individual functions (`add`, `subtract`) OR a single `calculate` function, but NEVER both. Choose the simplest path that achieves the goal.
+    3.  **PROFESSIONAL INTERFACE CONTRACTS:**
+        -   **Mandatory Type Hinting:** All function and method signatures in the `public_members` list MUST include type hints.
+        -   **Comprehensive Docstrings:** The `purpose` for each file MUST be a comprehensive, Google-style module docstring explaining its role in the system.
 """)
-
-# --- NEW: A protocol for handling test environments and execution ---
-TESTING_AND_EXECUTION_PROTOCOL = textwrap.dedent("""
-    **LAW: TESTING & EXECUTION PROTOCOL - CRITICAL FOR GUI & TEST-RELATED FIXES.**
-
-    1.  **BEWARE THE `pytest-qt` ENVIRONMENT:** When fixing failures from `pytest` involving a GUI application (like PySide6 or PyQt), the test runner (`pytest`) already creates and manages a `QApplication` instance.
-    2.  **NEVER CREATE A DUPLICATE `QApplication`:** The application's `main()` function MUST NOT create a new `QApplication` if one already exists. The correct pattern is: `app = QApplication.instance() or QApplication(sys.argv)`.
-    3.  **DO NOT BLOCK THE TEST RUNNER:** The `main()` function MUST NOT call `app.exec()` or `sys.exit()` when running inside a test. This will cause the test to hang indefinitely. The event loop MUST be guarded. The correct pattern is: `if 'pytest' not in sys.modules: sys.exit(app.exec())`. This ensures the application only enters its event loop when run directly, not when being tested.
-""")
-
 
 # --- (The S_TIER_ENGINEERING_PROTOCOL remains the same) ---
 S_TIER_ENGINEERING_PROTOCOL = textwrap.dedent("""
@@ -56,7 +64,7 @@ S_TIER_ENGINEERING_PROTOCOL = textwrap.dedent("""
 
     2.  **MODERN & EFFICIENT PYTHON:**
         -   **Always prefer `pathlib.Path` over `os.path`** for all file system operations.
-        -   **Use Dataclasses:** For simple data-holding objects, always prefer `@dataclass`.
+        -   **Use Dataclasses or Pydantic:** For data-holding objects, always prefer `@dataclass` for internal data or `pydantic.BaseModel` for data with validation and serialization needs.
         -   **Use F-strings:** All string formatting must use f-strings.
         -   **Dependency Management:** All external libraries MUST be listed in a `requirements.txt` file.
 

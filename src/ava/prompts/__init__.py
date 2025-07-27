@@ -7,8 +7,10 @@ from .modifier import MODIFICATION_REWRITER_PROMPT
 from .tester import TESTER_PROMPT, FILE_TESTER_PROMPT
 # Prompts for the "Healing" workflow
 from .healer import TEST_HEALER_PROMPT, RUNTIME_HEALER_PROMPT
-# NEW: Prompt for the "Analysis" step in healing
+# Prompt for the "Analysis" step in healing
 from .analyst import ANALYST_PROMPT
+# NEW: Prompt for high-level architectural planning
+from .meta_architect import META_ARCHITECT_PROMPT
 
 
 __all__ = [
@@ -20,4 +22,5 @@ __all__ = [
     'TEST_HEALER_PROMPT',
     'RUNTIME_HEALER_PROMPT',
     'ANALYST_PROMPT',
+    'META_ARCHITECT_PROMPT',
 ]

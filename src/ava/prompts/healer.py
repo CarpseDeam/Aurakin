@@ -6,25 +6,25 @@ import textwrap
 from .master_rules import JSON_OUTPUT_RULE, S_TIER_ENGINEERING_PROTOCOL
 
 # Prompt for fixing test failures from `pytest`
-TEST_HEALER_PROMPT = textwrap.dedent(f"""
+TEST_HEALER_PROMPT = textwrap.dedent("""
     You are an S-Tier AI Software Engineer. An expert analyst has identified the root cause of a test failure. Your mission is to rewrite the necessary files to implement the fix.
 
     **EXPERT ANALYSIS OF THE BUG:**
-    "{{bug_analysis}}"
+    "{bug_analysis}"
 
     ---
     **ORIGINAL USER REQUEST (for context):**
-    "{{user_request}}"
+    "{user_request}"
 
     ---
     **FAILED TEST OUTPUT (`pytest`):**
     ```
-    {{test_output}}
+    {test_output}
     ```
     ---
     **EXISTING PROJECT FILES (Paths and Full Content):**
     ```json
-    {{existing_files_json}}
+    {existing_files_json}
     ```
     ---
     **CRITICAL TASK: GENERATE THE FIX**
@@ -55,25 +55,25 @@ TEST_HEALER_PROMPT = textwrap.dedent(f"""
 
 
 # --- NEW PROMPT for fixing runtime errors ---
-RUNTIME_HEALER_PROMPT = textwrap.dedent(f"""
+RUNTIME_HEALER_PROMPT = textwrap.dedent("""
     You are an S-Tier AI Software Engineer. An expert analyst has identified the root cause of a runtime error. Your mission is to rewrite the necessary file(s) to implement the fix.
 
     **EXPERT ANALYSIS OF THE BUG:**
-    "{{bug_analysis}}"
+    "{bug_analysis}"
 
     ---
     **ORIGINAL USER REQUEST (for context):**
-    "{{user_request}}"
+    "{user_request}"
 
     ---
     **RUNTIME TRACEBACK:**
     ```
-    {{runtime_traceback}}
+    {runtime_traceback}
     ```
     ---
     **EXISTING PROJECT FILES (Paths and Full Content):**
     ```json
-    {{existing_files_json}}
+    {existing_files_json}
     ```
     ---
     **CRITICAL TASK: GENERATE THE FIX**

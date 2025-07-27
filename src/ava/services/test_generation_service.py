@@ -4,6 +4,9 @@ from typing import TYPE_CHECKING, Optional, Any, Dict
 import re
 
 from src.ava.prompts import TESTER_PROMPT, FILE_TESTER_PROMPT
+# --- THIS IS THE FIX ---
+from src.ava.prompts.master_rules import S_TIER_ENGINEERING_PROTOCOL, RAW_CODE_OUTPUT_RULE
+# --- END OF FIX ---
 from src.ava.services.base_generation_service import BaseGenerationService
 
 if TYPE_CHECKING:
@@ -42,7 +45,9 @@ class TestGenerationService(BaseGenerationService):
         prompt = TESTER_PROMPT.format(
             function_name=function_name,
             function_code=function_code,
-            module_path=module_path
+            module_path=module_path,
+            S_TIER_ENGINEERING_PROTOCOL=S_TIER_ENGINEERING_PROTOCOL,
+            RAW_CODE_OUTPUT_RULE=RAW_CODE_OUTPUT_RULE
         )
 
         full_response = await self._call_llm_agent(prompt, "tester")
@@ -72,7 +77,9 @@ class TestGenerationService(BaseGenerationService):
 
         prompt = FILE_TESTER_PROMPT.format(
             file_content=file_content,
-            module_path=module_path
+            module_path=module_path,
+            S_TIER_ENGINEERING_PROTOCOL=S_TIER_ENGINEERING_PROTOCOL,
+            RAW_CODE_OUTPUT_RULE=RAW_CODE_OUTPUT_RULE
         )
 
         full_response = await self._call_llm_agent(prompt, "tester")

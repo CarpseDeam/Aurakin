@@ -66,7 +66,12 @@ class ActionService:
         project_path = Path(project_path_str)
 
         await rag_manager.switch_project_context(project_path)
-        app_state_service.set_app_state(AppState.MODIFY, project_manager.active_project_name)
+
+        # --- THIS IS THE FIX ---
+        # A new project is created, but we are still in the BOOTSTRAP state.
+        # The next prompt will trigger the creation workflow.
+        app_state_service.set_app_state(AppState.BOOTSTRAP, project_manager.active_project_name)
+        # --- END OF FIX ---
 
         self.event_bus.emit("project_root_selected", project_path_str)
 

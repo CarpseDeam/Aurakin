@@ -5,16 +5,16 @@ This module contains the prompts for the "Rewrite and Diff" modification workflo
 import textwrap
 from .master_rules import JSON_OUTPUT_RULE, S_TIER_ENGINEERING_PROTOCOL
 
-MODIFICATION_REWRITER_PROMPT = textwrap.dedent(f"""
+MODIFICATION_REWRITER_PROMPT = textwrap.dedent("""
     You are an S-Tier AI Software Engineer. Your task is to modify an existing Python codebase to implement a user's request by rewriting the necessary files.
 
     **USER REQUEST:**
-    "{{user_request}}"
+    "{user_request}"
 
     ---
     **EXISTING PROJECT FILES (Paths and Full Content):**
     ```json
-    {{existing_files_json}}
+    {existing_files_json}
     ```
     ---
     **CRITICAL & UNBREAKABLE LAWS OF MODIFICATION**
@@ -37,10 +37,10 @@ MODIFICATION_REWRITER_PROMPT = textwrap.dedent(f"""
 
     **EXAMPLE OUTPUT:**
     ```json
-    {{{{
+    {{
       "src/calculator/cli.py": "#!/usr/bin/env python\\n# src/calculator/cli.py\\n\\nimport argparse\\nfrom .operations import add, subtract, multiply, divide, power\\n\\ndef run_calculator():\\n    # ... (rest of the rewritten file) ...",
       "src/calculator/operations.py": "# src/calculator/operations.py\\n\\ndef add(a, b):\\n    return a + b\\n\\ndef subtract(a, b):\\n    return a - b\\n\\ndef multiply(a, b):\\n    return a * b\\n\\ndef divide(a, b):\\n    # ... (rest of the rewritten file including new power function) ..."
-    }}}}
+    }}
     ```
 
     Execute your mission. Analyze the request and provide the JSON object containing the rewritten files.

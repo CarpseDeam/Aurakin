@@ -3,17 +3,17 @@ import textwrap
 
 from .master_rules import JSON_OUTPUT_RULE
 
-ANALYST_PROMPT = textwrap.dedent(f"""
+ANALYST_PROMPT = textwrap.dedent("""
     You are a world-class diagnostic engineer. Your sole purpose is to analyze a traceback from a Python application and determine the precise root cause of the error.
 
     **TRACEBACK / TEST FAILURE:**
     ```
-    {{error_output}}
+    {error_output}
     ```
 
     **EXISTING PROJECT FILES (For Context):**
     ```json
-    {{existing_files_json}}
+    {existing_files_json}
     ```
 
     ---
