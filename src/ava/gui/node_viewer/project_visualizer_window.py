@@ -39,6 +39,7 @@ from src.ava.gui.node_viewer.project_node import ProjectNode
 from src.ava.gui.node_viewer.animated_connection import AnimatedConnection
 from src.ava.services.code_structure_service import CodeStructureService
 from src.ava.gui.node_viewer.project_actions_sidebar import ProjectActionsSidebar
+from src.ava.gui.node_viewer.agent_node import AgentNode
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,9 @@ class ProjectVisualizerWindow(QMainWindow):
         self.project_manager = project_manager
         self.code_structure_service = CodeStructureService()
         self.nodes: Dict[str, ProjectNode] = {}
+        self.agent_nodes: Dict[str, AgentNode] = {}
         self.connections: List[AnimatedConnection] = []
+        self.agent_connections: List[AnimatedConnection] = []
         self._active_connections: List[AnimatedConnection] = []
         self._animation_group = QParallelAnimationGroup()
 
@@ -258,7 +261,7 @@ class ProjectVisualizerWindow(QMainWindow):
         child_node.toggle_requested.connect(lambda n=child_node: self._handle_node_toggle(n))
         self._create_connection(parent_node, child_node)
 
-    def _create_connection(self, start_node: ProjectNode, end_node: ProjectNode) -> AnimatedConnection:
+    def _create_connection(self, start_node: QGraphicsObject, end_node: ProjectNode) -> AnimatedConnection:
         connection = AnimatedConnection(start_node, end_node)
         self.scene.addItem(connection)
         start_node.add_connection(connection, is_outgoing=True)
@@ -275,8 +278,8 @@ class ProjectVisualizerWindow(QMainWindow):
     def _set_children_visibility(self, parent_node: ProjectNode, is_visible: bool):
         for child in parent_node.child_nodes:
             child.setVisible(is_visible)
-            if child.incoming_connection:
-                child.incoming_connection.setVisible(is_visible)
+            for conn in child.incoming_connections:
+                conn.setVisible(is_visible)
 
             if child.is_expanded and is_visible:
                 self._set_children_visibility(child, True)
@@ -341,16 +344,21 @@ class ProjectVisualizerWindow(QMainWindow):
             QTimer.singleShot(10, self._fit_view_with_padding)
 
     def _update_all_connections(self):
-        for conn in self.connections:
+        all_conns = self.connections + self.agent_connections
+        for conn in all_conns:
             if conn.isVisible():
                 conn.update_path()
 
     def _clear_scene(self) -> None:
         for conn in self.connections:
             conn.animation_timer.stop()
+        for conn in self.agent_connections:
+            conn.animation_timer.stop()
         self.scene.clear()
         self.nodes.clear()
+        self.agent_nodes.clear()
         self.connections.clear()
+        self.agent_connections.clear()
         self._active_connections.clear()
 
     def _fit_view_with_padding(self) -> None:
@@ -371,21 +379,12 @@ class ProjectVisualizerWindow(QMainWindow):
                 return node
         return None
 
-    def _handle_agent_activity(self, agent_name: str, target_file_path: str):
-        self.log("info", f"Visualizing activity for Agent: {agent_name} on file: {Path(target_file_path).name}")
-        self._deactivate_all_connections()
-
-        target_node = self._find_node_by_path(target_file_path)
-        if not target_node:
-            self.log("warning", f"Could not find a node for target path: {target_file_path}")
-            return
-
+    def _ensure_node_visible(self, node: ProjectNode):
+        """Expands parent nodes to make the target node visible."""
         needs_relayout = False
-        path_nodes = []
-        current = target_node
+        current = node.parent_node
         while current:
-            path_nodes.insert(0, current)
-            if not current.is_expanded and current.child_nodes:
+            if not current.is_expanded:
                 current.is_expanded = True
                 self._set_children_visibility(current, True)
                 needs_relayout = True
@@ -394,24 +393,67 @@ class ProjectVisualizerWindow(QMainWindow):
         if needs_relayout:
             self._relayout_and_animate()
 
-        agent_colors = {
-            "architect": Colors.AGENT_ARCHITECT_COLOR,
-            "coder": Colors.AGENT_CODER_COLOR,
-            "rewriter": Colors.ACCENT_GREEN,
-            "healer": Colors.ACCENT_RED,
-        }
-        color = agent_colors.get(agent_name.lower(), Colors.ACCENT_BLUE)
+    def _handle_agent_activity(self, agent_name: str, target_file_path: str):
+        self.log("info", f"Visualizing activity for Agent: {agent_name} on file: {Path(target_file_path).name}")
 
-        for node in path_nodes:
-            if node.incoming_connection:
-                node.incoming_connection.activate(color)
-                self._active_connections.append(node.incoming_connection)
+        # Step 1: Clean up previous agent visuals
+        for conn in self.agent_connections:
+            self.scene.removeItem(conn)
+        self.agent_connections.clear()
+        for node in self.agent_nodes.values():
+            self.scene.removeItem(node)
+        self.agent_nodes.clear()
+
+        # Step 2: Create the AgentNode
+        agent_node = AgentNode(agent_name)
+        self.agent_nodes[agent_name] = agent_node
+        self.scene.addItem(agent_node)
+        agent_y_pos = self.scene.itemsBoundingRect().center().y() if self.nodes else 0
+        agent_node.setPos(-200, agent_y_pos)
+
+        # Step 3: Find the target ProjectNode
+        target_node = self._find_node_by_path(target_file_path)
+        if not target_node:
+            self.log("warning", f"Could not find a node for target path: {target_file_path}")
+            return
+
+        # Step 4: Create the connection BEFORE any potential relayout
+        connection = AnimatedConnection(agent_node, target_node)
+        self.scene.addItem(connection)
+        self.agent_connections.append(connection)
+        agent_node.add_connection(connection)
+        target_node.add_connection(connection, is_outgoing=False)
+
+        # Step 5: Ensure the target node is visible, which may trigger an animated relayout
+        self._ensure_node_visible(target_node)
+
+        # Step 6: Activate the connection's pulse
+        agent_colors = {
+            "Architect": Colors.AGENT_ARCHITECT_COLOR,
+            "Coder": Colors.AGENT_CODER_COLOR,
+            "Rewriter": Colors.AGENT_REWRITER_COLOR,
+            "Healer": Colors.AGENT_HEALER_COLOR,
+            "Tester": Colors.AGENT_TESTER_COLOR,
+        }
+        color = agent_colors.get(agent_name, Colors.ACCENT_BLUE)
+        connection.activate(color)
 
     def _deactivate_all_connections(self, *args, **kwargs):
-        self.log("info", "Deactivating all visualizer connections.")
+        self.log("info", "Deactivating all agent and project visualizations.")
+
+        # Deactivate any pulsing project-to-project connections
         for conn in self._active_connections:
             conn.deactivate()
         self._active_connections.clear()
+
+        # Remove agent nodes and their connections
+        for conn in self.agent_connections:
+            self.scene.removeItem(conn)
+        self.agent_connections.clear()
+
+        for agent_node in self.agent_nodes.values():
+            self.scene.removeItem(agent_node)
+        self.agent_nodes.clear()
 
     def show(self) -> None:
         super().show()

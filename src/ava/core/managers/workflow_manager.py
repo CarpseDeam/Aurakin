@@ -114,12 +114,14 @@ class WorkflowManager:
         if interaction_mode == InteractionMode.PLAN:
             workflow_coroutine = self._run_chat_workflow(prompt, conversation_history)
         elif interaction_mode == InteractionMode.BUILD:
+            self.event_bus.emit("ai_task_started") # <-- For the thinking banner
             existing_files = self.service_manager.get_project_manager().get_project_files() if app_state == AppState.MODIFY else None
             workflow_coroutine = self._run_build_workflow(prompt, existing_files)
         if workflow_coroutine:
             self.task_manager.start_ai_workflow_task(workflow_coroutine)
 
     def handle_test_generation_request(self, function_name: str, source_file_path_str: str):
+        self.event_bus.emit("ai_task_started") # <-- For the thinking banner
         self.task_manager.start_ai_workflow_task(
             self._run_single_function_test_workflow(function_name, source_file_path_str)
         )
@@ -132,23 +134,30 @@ class WorkflowManager:
         if not all([test_generation_service, project_manager, extractor_service, project_manager.active_project_path]):
             self.log("error", "Cannot generate test: Services or active project not available.")
             return
+
+        self.event_bus.emit("agent_activity_started", "Tester", source_file_path_str)
+
         source_file_path = Path(source_file_path_str)
         try:
             file_content = source_file_path.read_text(encoding='utf-8')
             function_code = extractor_service.extract_code_block(file_content, function_name)
             if not function_code:
                 self.log("error", f"Code Extractor failed to find function '{function_name}'.")
+                self.event_bus.emit("ai_workflow_finished") # Ensure banner hides on failure
                 return
         except Exception as e:
             self.log("error", f"Failed to read or extract from source file: {e}")
+            self.event_bus.emit("ai_workflow_finished") # Ensure banner hides on failure
             return
         relative_source_path = source_file_path.relative_to(project_manager.active_project_path).as_posix()
         generated_assets = await test_generation_service.generate_test_for_function(
             function_name, function_code, relative_source_path
         )
         await self._save_and_commit_test_assets(generated_assets, source_file_path, f"tests for {function_name}")
+        self.event_bus.emit("ai_workflow_finished")
 
     def handle_file_test_generation_request(self, source_file_rel_path: str):
+        self.event_bus.emit("ai_task_started") # <-- For the thinking banner
         self.task_manager.start_ai_workflow_task(
             self._run_full_file_test_workflow(source_file_rel_path)
         )
@@ -160,17 +169,22 @@ class WorkflowManager:
         if not all([test_generation_service, project_manager, project_manager.active_project_path]):
             self.log("error", "Cannot generate test file: Services or active project not available.")
             return
+
         source_file_abs_path = project_manager.active_project_path / source_file_rel_path
+        self.event_bus.emit("agent_activity_started", "Tester", str(source_file_abs_path))
+
         try:
             file_content = source_file_abs_path.read_text(encoding='utf-8')
         except Exception as e:
             self.log("error", f"Failed to read source file '{source_file_abs_path.name}': {e}")
+            self.event_bus.emit("ai_workflow_finished") # Ensure banner hides on failure
             return
         generated_assets = await test_generation_service.generate_tests_for_file(
             file_content, source_file_rel_path
         )
         await self._save_and_commit_test_assets(generated_assets, source_file_abs_path,
                                                 f"tests for file {source_file_abs_path.name}")
+        self.event_bus.emit("ai_workflow_finished")
 
     async def _save_and_commit_test_assets(self, generated_assets: Optional[Dict[str, str]], source_file_path: Path,
                                            commit_subject: str):
@@ -202,6 +216,7 @@ class WorkflowManager:
 
     def handle_test_heal_request(self):
         self.log("info", "Test-based Heal request received. Starting Heal workflow.")
+        self.event_bus.emit("ai_task_started") # <-- For the thinking banner
         self.task_manager.start_ai_workflow_task(self._run_test_heal_workflow())
 
     def _find_failing_test_file(self, pytest_output: str) -> Optional[str]:
@@ -224,6 +239,7 @@ class WorkflowManager:
         if exit_code == 0:
             self.log("success", "All tests passed! No healing needed.")
             self.event_bus.emit("agent_status_changed", "Healer", "All tests passed!", "fa5s.check-circle")
+            self.event_bus.emit("ai_workflow_finished")
             return
         failing_file = self._find_failing_test_file(test_output)
         files_for_prompt = project_manager.get_project_files()
@@ -231,9 +247,11 @@ class WorkflowManager:
             self.log("info", f"Redacting failing test file '{failing_file}' from Healer's context to prevent cheating.")
             files_for_prompt[failing_file] = "[This is the failing test file. Its content is locked and cannot be modified. You MUST fix the bug in the source code to make this test pass.]"
         await self._run_generic_heal_workflow(TEST_HEALER_PROMPT, {"test_output": test_output}, files_for_prompt)
+        self.event_bus.emit("ai_workflow_finished")
 
     def handle_run_and_heal_request(self, command: str):
         self.log("info", f"Run & Heal request received for command: '{command}'")
+        self.event_bus.emit("ai_task_started") # <-- For the thinking banner
         self.task_manager.start_ai_workflow_task(self._run_program_and_heal_workflow(command))
 
     async def _run_program_and_heal_workflow(self, command: str):
@@ -244,12 +262,14 @@ class WorkflowManager:
         if exit_code == 0:
             self.log("success", "Program ran successfully! No healing needed.")
             self.event_bus.emit("agent_status_changed", "Executor", "Run successful!", "fa5s.check-circle")
+            self.event_bus.emit("ai_workflow_finished")
             return
         files_for_prompt = self.service_manager.get_project_manager().get_project_files()
         if "SyntaxError:" in runtime_output:
             self.log("warning", "SyntaxError detected. Attempting to fix syntax first.")
             await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, {"runtime_traceback": runtime_output}, files_for_prompt)
             self.event_bus.emit("terminal_output_received", "\n--- Syntax error fixed. Please try running the program again. ---")
+            self.event_bus.emit("ai_workflow_finished")
             return
         if "ModuleNotFoundError" in runtime_output:
             self.log("info", "ModuleNotFoundError detected. Attempting to install dependencies.")
@@ -260,6 +280,7 @@ class WorkflowManager:
                 self.log("warning", "requirements.txt not found. Cannot automatically install dependencies.")
                 self.event_bus.emit("terminal_output_received",
                                     "--- requirements.txt not found. Please create one or ask the AI to generate it. ---")
+                self.event_bus.emit("ai_workflow_finished")
                 return
             self.event_bus.emit("terminal_output_received", "--- Found requirements.txt. Attempting to install... ---")
             install_command = "pip install -r requirements.txt"
@@ -270,8 +291,10 @@ class WorkflowManager:
             else:
                 self.event_bus.emit("terminal_output_received",
                                     "\n--- Failed to install dependencies. Please check the error log above. ---")
+            self.event_bus.emit("ai_workflow_finished")
             return
         await self._run_generic_heal_workflow(RUNTIME_HEALER_PROMPT, {"runtime_traceback": runtime_output}, files_for_prompt)
+        self.event_bus.emit("ai_workflow_finished")
 
     async def _run_generic_heal_workflow(self, prompt_template: str, context: Dict[str, str],
                                          files_for_prompt: Dict[str, str]):
@@ -282,6 +305,12 @@ class WorkflowManager:
         llm_client = self.service_manager.get_llm_client()
         from src.ava.services import ResponseValidatorService
         validator = ResponseValidatorService()
+
+        # --- NEW: Show Healer agent analyzing the project root BEFORE thinking ---
+        if project_manager.active_project_path:
+            self.event_bus.emit("agent_activity_started", "Healer", str(project_manager.active_project_path))
+        # --- END NEW ---
+
         prompt_context = {
             "user_request": self._last_user_request or "The user's last request was to fix a failure.",
             "existing_files_json": json.dumps(files_for_prompt, indent=2),

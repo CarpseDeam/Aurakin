@@ -38,7 +38,7 @@ class ProjectNode(QGraphicsObject):
         self.parent_node: Optional['ProjectNode'] = None
 
         # --- Connections ---
-        self.incoming_connection: Optional['AnimatedConnection'] = None
+        self.incoming_connections: List['AnimatedConnection'] = []
         self.outgoing_connections: List['AnimatedConnection'] = []
 
         self.setFlags(QGraphicsItem.ItemIsMovable | QGraphicsItem.ItemIsSelectable)
@@ -59,8 +59,8 @@ class ProjectNode(QGraphicsObject):
     def itemChange(self, change: QGraphicsItem.GraphicsItemChange, value: Any) -> Any:
         if change == QGraphicsItem.ItemPositionHasChanged:
             # Update all connections when this node moves
-            if self.incoming_connection:
-                self.incoming_connection.update_path()
+            for conn in self.incoming_connections:
+                conn.update_path()
             for conn in self.outgoing_connections:
                 conn.update_path()
         return super().itemChange(change, value)
@@ -69,7 +69,7 @@ class ProjectNode(QGraphicsObject):
         if is_outgoing:
             self.outgoing_connections.append(connection)
         else:
-            self.incoming_connection = connection
+            self.incoming_connections.append(connection)
 
     def boundingRect(self) -> QRectF:
         return QRectF(0, 0, NODE_WIDTH, NODE_HEIGHT)
@@ -124,7 +124,10 @@ class ProjectNode(QGraphicsObject):
 
         text_x = icon_rect.right() + 8
         text_width = NODE_WIDTH - text_x - 8
+        # --- THIS IS THE FIX ---
+        # The height of the text rectangle should be NODE_HEIGHT, not NODE_WIDTH.
         text_rect = QRectF(text_x, 0, text_width, NODE_HEIGHT)
+        # --- END OF FIX ---
         painter.setPen(QPen(text_color))
         painter.setFont(Typography.body())
         elided_name = QFontMetrics(painter.font()).elidedText(self.name, Qt.TextElideMode.ElideRight, text_width)

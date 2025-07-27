@@ -290,7 +290,8 @@ class ChatInterface(QWidget):
         self.event_bus.subscribe("streaming_end", self.on_streaming_end)
         self.event_bus.subscribe("chat_cleared", self.clear_chat)
         self.scroll_area.verticalScrollBar().rangeChanged.connect(self._scroll_to_bottom)
-        self.event_bus.subscribe("user_request_submitted", self.show_thinking_indicator)
+        # --- UNIVERSAL THINKING BANNER ---
+        self.event_bus.subscribe("ai_task_started", self.show_thinking_indicator)
         self.event_bus.subscribe("streaming_end", self.hide_thinking_indicator)
         self.event_bus.subscribe("ai_workflow_finished", self.hide_thinking_indicator)
 

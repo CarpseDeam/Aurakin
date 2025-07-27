@@ -247,6 +247,10 @@ class EventCoordinator:
             self.event_bus.subscribe("position_cursor", editor_manager.handle_position_cursor)
             self.event_bus.subscribe("finalize_editor_content", editor_manager.handle_finalize_content)
             self.event_bus.subscribe("build_workflow_started", lambda: editor_manager.set_generating_state(True))
+            # --- THIS IS THE FIX ---
+            # The new 'ai_task_started' event now correctly signals the start of any AI task.
+            # We also still listen for the old events for backward compatibility if needed.
+            self.event_bus.subscribe("ai_task_started", lambda: editor_manager.set_generating_state(True))
             self.event_bus.subscribe("ai_workflow_finished", lambda: editor_manager.set_generating_state(False))
         else:
             logger.warning("AI Workflow Event Wiring: CodeViewer or EditorTabManager not available.")

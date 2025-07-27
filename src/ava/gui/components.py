@@ -1,3 +1,4 @@
+# src/ava/gui/components.py
 from PySide6.QtGui import QColor, QFont, QPainter
 from PySide6.QtWidgets import QPushButton, QSlider, QLabel, QHBoxLayout, QWidget
 from PySide6.QtCore import Qt, Signal
@@ -26,6 +27,9 @@ class Colors:
     # --- Agent Colors for Visualizer ---
     AGENT_ARCHITECT_COLOR = QColor("#8957e5")  # Purple
     AGENT_CODER_COLOR = QColor("#ffa500")      # Orange (same as ACCENT_BLUE)
+    AGENT_REWRITER_COLOR = QColor("#3fb950")   # Green
+    AGENT_HEALER_COLOR = QColor("#f85149")     # Red
+    AGENT_TESTER_COLOR = QColor("#388bfd")     # A nice, distinct blue
 
     # Transparent background for highlighting lines in the editor
     DIFF_ADD_BG = QColor(46, 160, 67, 40)  # More subtle green highlight

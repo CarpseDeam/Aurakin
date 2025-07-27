@@ -72,6 +72,12 @@ class GenerationCoordinator(BaseGenerationService):
             self.event_bus.emit("ai_workflow_finished")
             return None
 
+        # --- NEW: Emit architect activity ---
+        if self.project_manager and self.project_manager.active_project_path:
+            self.event_bus.emit("agent_activity_started", "Architect", str(self.project_manager.active_project_path))
+            await asyncio.sleep(1.5)  # Give it time to be visible
+        # --- END NEW ---
+
         files_to_create = [item.get('file') for item in interface_contract if item.get('file')]
         self.log("success", f"Architect planned {len(files_to_create)} files with interface contracts.")
         self.event_bus.emit("project_scaffold_generated", {path: "" for path in files_to_create})
