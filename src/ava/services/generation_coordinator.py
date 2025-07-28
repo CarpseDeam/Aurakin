@@ -103,13 +103,16 @@ class GenerationCoordinator(BaseGenerationService):
             self.event_bus.emit("ai_workflow_finished")
             return None
 
-        # --- NEW: Architect Animation ---
+        files_to_generate = {item.get('file'): "" for item in interface_contract if item.get('file')}
+        self.log("success", f"File Planner designed {len(files_to_generate)} files.")
+
+        # --- FIX: Ensure visual nodes are created BEFORE triggering animations ---
+        self.event_bus.emit("project_scaffold_generated", files_to_generate)
+        await asyncio.sleep(0.5)  # Give the UI a moment to process the scaffold
+
         if self.project_manager and self.project_manager.active_project_path:
             self.event_bus.emit("agent_activity_started", "Architect", str(self.project_manager.active_project_path))
             await asyncio.sleep(1.5)  # Pause to let the animation be seen
-
-        files_to_generate = {item.get('file'): "" for item in interface_contract if item.get('file')}
-        self.log("success", f"File Planner designed {len(files_to_generate)} files.")
 
         # --- PHASE 2: CODER - FILE-BY-FILE IMPLEMENTATION ---
         final_code = existing_files.copy() if existing_files else {}
@@ -196,5 +199,4 @@ class GenerationCoordinator(BaseGenerationService):
                 await asyncio.sleep(1.1)
 
         self.log("success", "✅ Unified Workflow Finished Successfully.")
-        self.event_bus.emit("ai_workflow_finished")
         return final_code

@@ -103,25 +103,37 @@ class EditorTabManager:
         if norm_path not in self.editors:
             self.create_editor_tab(norm_path)
         self.set_editor_content(norm_path, content)
-        # We no longer automatically focus here, we let the display_final_files method handle it.
-        # self.focus_tab(norm_path)
 
     def display_final_files(self, files_to_display: Dict[str, str]):
         """
-        Clears existing tabs and displays only the specified files.
-        This is the primary method for showing generation results.
+        Prunes open tabs to ensure only the specified files are visible.
+        This is non-destructive to tabs that are already open and correct.
         """
-        self.clear_all_tabs()
         if not files_to_display:
+            self.clear_all_tabs()
             self._add_welcome_tab("No files were changed in this modification.")
             return
 
-        first_file_path = None
-        for path_str, content in files_to_display.items():
-            if first_file_path is None:
-                first_file_path = self._resolve_and_normalize_path(path_str)
-            self.create_or_update_tab(path_str, content)
+        final_paths_to_display = {self._resolve_and_normalize_path(p) for p in files_to_display.keys()}
 
+        # Close tabs that are not in the final list
+        tabs_to_close = []
+        for i in range(self.tab_widget.count()):
+            tab_path = self.tab_widget.tabToolTip(i)
+            if tab_path not in final_paths_to_display:
+                tabs_to_close.append(i)
+
+        for i in sorted(tabs_to_close, reverse=True):
+            self.close_tab(i, force_close=True)  # Force close as this is a programmatic cleanup
+
+        # Ensure all required tabs are open (in case they weren't streamed)
+        for path_str, content in files_to_display.items():
+            norm_path = self._resolve_and_normalize_path(path_str)
+            if norm_path not in self.editors:
+                self.create_or_update_tab(path_str, content)
+
+        # Focus the first tab in the list
+        first_file_path = self._resolve_and_normalize_path(next(iter(files_to_display)))
         if first_file_path:
             self.focus_tab(first_file_path)
 

@@ -2,21 +2,21 @@
 import logging
 from pathlib import Path
 from PySide6.QtWidgets import (QMainWindow, QVBoxLayout, QWidget, QSplitter,
-                               QTabWidget, QMessageBox, QDockWidget)
+                               QMessageBox, QDockWidget)
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeySequence, QShortcut, QCloseEvent
 import qasync
 
 from src.ava.core.event_bus import EventBus
 from src.ava.core.project_manager import ProjectManager
-from src.ava.gui.project_context_manager import ProjectContextManager
-from src.ava.gui.file_tree_manager import FileTreeManager
+from src.ava.gui.draggable_tab_widget import DraggableTabWidget
 from src.ava.gui.editor_tab_manager import EditorTabManager
+from src.ava.gui.executor_log_panel import ExecutorLogPanel
+from src.ava.gui.file_tree_manager import FileTreeManager
 from src.ava.gui.find_replace_dialog import FindReplaceDialog
 from src.ava.gui.quick_file_finder import QuickFileFinder
 from src.ava.gui.status_bar import StatusBar
-from src.ava.services.lsp_client_service import LSPClientService
-from src.ava.gui.executor_log_panel import ExecutorLogPanel
+from src.ava.services import LSPClientService
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +67,8 @@ class CodeViewerWindow(QMainWindow):
         file_tree_panel_layout.addWidget(self.file_tree_manager.get_widget())
         main_splitter.addWidget(file_tree_panel_widget)
 
-        # --- Right Panel: Editor Tabs Only ---
-        tab_widget = QTabWidget()
+        # --- Right Panel: Editor Tabs (Now Draggable!) ---
+        tab_widget = DraggableTabWidget()
         tab_widget.setTabsClosable(True)
         tab_widget.setMovable(True)
         tab_widget.tabCloseRequested.connect(self._on_tab_close_requested)
@@ -78,7 +78,6 @@ class CodeViewerWindow(QMainWindow):
 
         main_splitter.setSizes([300, 1100])
 
-        # --- NEW: Executor Log Panel as a Dock Widget ---
         self.executor_dock = QDockWidget("Executor Log", self)
         self.executor_dock.setObjectName("ExecutorLogDock")
         self.executor_log_panel = ExecutorLogPanel()
@@ -116,7 +115,6 @@ class CodeViewerWindow(QMainWindow):
         quick_open_action.triggered.connect(self._show_quick_file_finder)
         go_menu.addAction(quick_open_action)
 
-        # --- NEW: View Menu for toggling panels ---
         view_menu = menubar.addMenu("View")
         toggle_executor_log_action = self.executor_dock.toggleViewAction()
         toggle_executor_log_action.setText("Executor Log Panel")
@@ -131,15 +129,11 @@ class CodeViewerWindow(QMainWindow):
         quick_open_shortcut.activated.connect(self._show_quick_file_finder)
 
     def _connect_events(self) -> None:
-        # This old event is no longer the primary way to display files.
-        # It's kept for potential backward compatibility with other features.
         self.event_bus.subscribe("workflow_finalized", self._on_workflow_finalized)
 
     def _on_workflow_finalized(self, final_code: dict) -> None:
         if self.file_tree_manager:
             self.file_tree_manager.refresh_tree_from_disk()
-        # The main display logic is now handled by display_final_files,
-        # triggered by the 'display_project_files' event.
 
     def _save_current_file(self) -> None:
         if self.editor_manager:
