@@ -20,12 +20,12 @@ except ImportError:
     openai = None
 try:
     import google.generativeai as genai
-    from google.generativeai.types import HarmCategory, HarmBlockThreshold
+    from google.generativeai.types import HarmCategory, HarmBlockThreshold, Content, Part
     from PIL import Image
     import io
 except ImportError:
-    genai = None;
-    Image = None;
+    genai = None
+    Image = None
     io = None
 try:
     import anthropic
@@ -107,28 +107,16 @@ def _prepare_openai_messages(history: List[Dict[str, Any]], prompt: str, image_b
     """
     processed_history = list(history) if history else []
 
-    # The `prompt` from the workflow manager is the primary text content for the current user turn.
-    # It contains the user's idea embedded within a larger system prompt (e.g., AURA_REFINEMENT_PROMPT).
-    # The `history` list also contains the user's text. To avoid duplication and ensure the full
-    # Aura prompt is used, we will replace the content of the last user message.
-
     current_turn_data = {
         "role": "user",
         "text": prompt,
         "image_b64": image_b64,
         "media_type": media_type
     }
-
-    # Replace the last message if it's the user's turn placeholder, otherwise append.
-    # This correctly syncs the full prompt and image with the latest user action.
     if processed_history and processed_history[-1].get("role") == "user":
         processed_history[-1] = current_turn_data
     else:
-        # This case is unlikely if the client-side logic is correct, but it's a safe fallback.
         processed_history.append(current_turn_data)
-
-    # Now, format the entire, corrected history for the API.
-    # ALL content fields MUST be a list of content blocks for multimodal APIs.
     messages = []
     for msg in processed_history:
         role = msg.get("role")
@@ -136,18 +124,12 @@ def _prepare_openai_messages(history: List[Dict[str, Any]], prompt: str, image_b
             continue
 
         content_parts = []
-
-        # Add text content for all roles.
         if text := (msg.get("text") or msg.get("content")):
             content_parts.append({"type": "text", "text": text})
-
-        # Add image content ONLY for user roles.
         if role == "user":
             if img_b64 := msg.get("image_b64"):
                 m_type = msg.get("media_type", "image/png")
                 content_parts.append({"type": "image_url", "image_url": {"url": f"data:{m_type};base64,{img_b64}"}})
-
-        # Add the message to the final list if it has any content.
         if content_parts:
             messages.append({"role": role, "content": content_parts})
 
@@ -171,9 +153,29 @@ async def _stream_openai_compatible(client, model, prompt, temp, image_b64, medi
         yield " "
 
 
+def _prepare_gemini_history(history: List[Dict[str, Any]]) -> List[Content]:
+    """Converts the generic history format to Gemini's Content object list."""
+    gemini_history = []
+    if not history:
+        return gemini_history
+
+    for msg in history:
+        role = "user" if msg.get("role") == "user" else "model"
+        text_content = msg.get("text") or msg.get("content", "")
+        # Gemini history API does not support images, only the current turn does.
+        if text_content:
+            gemini_history.append(Content(role=role, parts=[Part(text=text_content)]))
+    return gemini_history
+
+
 async def _stream_google(client, model, prompt, temp, image_b64, media_type, history):
+    # The history from the client includes the latest user message.
+    # We pass all prior messages to start_chat, and send the newest one in send_message.
+    gemini_history = _prepare_gemini_history(history[:-1] if history else [])
+
     model_instance = genai.GenerativeModel(f'models/{model}')
-    chat_session = model_instance.start_chat(history=[])
+    chat_session = model_instance.start_chat(history=gemini_history)
+
     content_parts = []
     if prompt: content_parts.append(prompt)
     if image_b64: content_parts.append(Image.open(io.BytesIO(base64.b64decode(image_b64))))
@@ -202,9 +204,6 @@ async def _stream_google(client, model, prompt, temp, image_b64, media_type, his
     content_sent = False
     full_response = None
     try:
-        # --- THIS IS THE FIX ---
-        # The response_stream object is an async iterator. We consume it here.
-        # The library also populates the same object with the final response details.
         async for chunk in response_stream:
             if not chunk.parts:
                 continue
@@ -212,14 +211,12 @@ async def _stream_google(client, model, prompt, temp, image_b64, media_type, his
                 content_sent = True
                 for char in chunk.text:
                     yield char
-        # After the loop, the `response_stream` object now holds the final metadata
         full_response = response_stream
-        # --- END OF FIX ---
     except Exception as e:
         yield f"LLM_API_ERROR: {str(e)}"
         return
 
-    if not content_sent and full_response:
+    if not content_sent and full_response and hasattr(full_response, 'candidates') and full_response.candidates:
         finish_reason = full_response.candidates[0].finish_reason
         if finish_reason.name == "SAFETY":
             yield "LLM_API_ERROR: Response was blocked by Google's safety filters. The prompt may have been too sensitive."

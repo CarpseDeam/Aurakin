@@ -3,7 +3,7 @@
     "architect": "google/gemini-2.5-pro",
     "coder": "google/gemini-2.5-flash",
     "tester": "google/gemini-2.5-flash",
-    "chat": "deepseek/deepseek-chat",
+    "chat": "google/gemini-2.5-flash",
     "reviewer": "google/gemini-2.5-pro"
   },
   "role_temperatures": {

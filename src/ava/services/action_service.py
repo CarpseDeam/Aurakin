@@ -1,7 +1,7 @@
 # src/ava/services/action_service.py
 from __future__ import annotations
 from typing import TYPE_CHECKING
-from PySide6.QtWidgets import QFileDialog, QMessageBox
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QInputDialog
 import asyncio
 from pathlib import Path
 
@@ -45,11 +45,16 @@ class ActionService:
                 chat_input.set_text_and_focus(prompt_text)
 
     async def handle_new_project(self):
-        # --- AGGRESSIVE STATE CLEARING ---
-        self.log("info", "New project requested. Aggressively clearing all session state.")
+        main_window = self.window_manager.get_main_window()
+        project_name, ok = QInputDialog.getText(main_window, "New Project", "Enter a name for your new project:")
+
+        if not ok or not project_name.strip():
+            self.log("info", "New project creation cancelled by user.")
+            return
+
+        self.log("info", f"New project '{project_name}' requested. Aggressively clearing all session state.")
         self.event_bus.emit("session_cleared")
         self.event_bus.emit("chat_cleared", "New project started. Let's build something amazing!")
-        # --- END AGGRESSIVE STATE CLEARING ---
 
         project_manager = self.service_manager.get_project_manager()
         rag_manager = self.service_manager.get_rag_manager()
@@ -57,7 +62,7 @@ class ActionService:
         lsp_client = self.service_manager.get_lsp_client_service()
         if not all([project_manager, rag_manager, app_state_service]): return
 
-        project_path_str = project_manager.new_project("New_AI_Project")
+        project_path_str = project_manager.new_project(project_name.strip())
         if not project_path_str:
             QMessageBox.critical(self.window_manager.get_main_window(), "Project Creation Failed",
                                  "Could not initialize project.")
@@ -67,11 +72,7 @@ class ActionService:
 
         await rag_manager.switch_project_context(project_path)
 
-        # --- THIS IS THE FIX ---
-        # A new project is created, but we are still in the BOOTSTRAP state.
-        # The next prompt will trigger the creation workflow.
         app_state_service.set_app_state(AppState.BOOTSTRAP, project_manager.active_project_name)
-        # --- END OF FIX ---
 
         self.event_bus.emit("project_root_selected", project_path_str)
 
@@ -88,11 +89,9 @@ class ActionService:
             self.event_bus.emit("branch_updated", project_manager.git_manager.get_active_branch_name())
 
     async def handle_load_project(self):
-        # --- AGGRESSIVE STATE CLEARING ---
         self.log("info", "Load project requested. Aggressively clearing all session state.")
         self.event_bus.emit("session_cleared")
         self.event_bus.emit("chat_cleared", "Project loading...")
-        # --- END AGGRESSIVE STATE CLEARING ---
 
         project_manager = self.service_manager.get_project_manager()
         rag_manager = self.service_manager.get_rag_manager()
@@ -136,10 +135,8 @@ class ActionService:
         app_state_service = self.service_manager.get_app_state_service()
         if app_state_service: app_state_service.set_app_state(AppState.BOOTSTRAP)
 
-        # --- AGGRESSIVE STATE CLEARING ---
         self.event_bus.emit("chat_cleared", "New session started.")
         self.event_bus.emit("session_cleared")
-        # --- END AGGRESSIVE STATE CLEARING ---
 
     def log(self, level: str, message: str):
         self.event_bus.emit("log_message_received", "ActionService", level, message)
