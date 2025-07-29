@@ -14,6 +14,7 @@ from src.ava.prompts.master_rules import (
 )
 from src.ava.services.base_generation_service import BaseGenerationService
 from src.ava.services.response_validator_service import ResponseValidatorService
+from src.ava.utils import sanitize_llm_code_output
 
 
 class GenerationCoordinator(BaseGenerationService):
@@ -24,30 +25,6 @@ class GenerationCoordinator(BaseGenerationService):
     def __init__(self, service_manager: Any, event_bus: EventBus):
         super().__init__(service_manager, event_bus)
         self.validator = ResponseValidatorService()
-
-    def _sanitize_code_output(self, raw_code: str) -> str:
-        """Removes markdown fences (both ``` and ''') from LLM-generated code."""
-        cleaned_code = raw_code.strip()
-
-        # Handle triple-backtick fences
-        if cleaned_code.startswith("```python"):
-            cleaned_code = cleaned_code[len("```python"):].strip()
-        elif cleaned_code.startswith("```"):
-            cleaned_code = cleaned_code[len("```"):].strip()
-
-        # Handle triple-single-quote fences
-        if cleaned_code.startswith("'''python"):
-            cleaned_code = cleaned_code[len("'''python"):].strip()
-        elif cleaned_code.startswith("'''"):
-            cleaned_code = cleaned_code[len("'''"):].strip()
-
-        # Remove closing fence of either type
-        if cleaned_code.endswith("```"):
-            cleaned_code = cleaned_code[:-len("```")].strip()
-        if cleaned_code.endswith("'''"):
-            cleaned_code = cleaned_code[:-len("'''")].strip()
-
-        return cleaned_code
 
     async def coordinate_generation(
             self,
@@ -63,10 +40,9 @@ class GenerationCoordinator(BaseGenerationService):
         self.log("info", "--- Starting Unified Hierarchical Workflow ---")
         self.event_bus.emit("agent_status_changed", "Architect", "Devising high-level strategy...", "fa5s.brain")
 
-        # --- FIX: Trigger Architect visualization immediately ---
         if self.project_manager and self.project_manager.active_project_path:
             self.event_bus.emit("agent_activity_started", "Architect", str(self.project_manager.active_project_path))
-            await asyncio.sleep(0.1)  # Allow the UI a moment to react and draw the node/connection
+            await asyncio.sleep(0.1)
 
         context_files_json = json.dumps(existing_files, indent=2) if existing_files else "{}"
 
@@ -125,9 +101,8 @@ class GenerationCoordinator(BaseGenerationService):
         files_to_generate = {item.get('file'): "" for item in interface_contract if item.get('file')}
         self.log("success", f"File Planner designed {len(files_to_generate)} files.")
 
-        # Now that planning is complete, create the visual file nodes from the plan.
         self.event_bus.emit("project_scaffold_generated", files_to_generate)
-        await asyncio.sleep(0.5)  # Give the UI a moment to process the scaffold
+        await asyncio.sleep(0.5)
 
         # --- PHASE 2: CODER - FILE-BY-FILE IMPLEMENTATION ---
         final_code = existing_files.copy() if existing_files else {}
@@ -146,16 +121,11 @@ class GenerationCoordinator(BaseGenerationService):
             file_content = ""
             made_api_call = True
 
-            if "pydantic_models" in parsed_strategy and pydantic_models and target_file.endswith(
-                    (".py")) and "models" in target_file:
-                file_content = pydantic_models
+            if "pydantic_models" in parsed_strategy and pydantic_models and "models" in target_file:
+                file_content = sanitize_llm_code_output(pydantic_models)
                 made_api_call = False
             elif target_file == 'requirements.txt':
-                # Safely handle the case where existing_files is None for new projects.
-                if existing_files:
-                    reqs = set(existing_files.get(target_file, "").splitlines())
-                else:
-                    reqs = set()
+                reqs = set(final_code.get(target_file, "").splitlines())
                 reqs.add("pytest")
                 if "pydantic" in pydantic_models.lower():
                     reqs.add("pydantic")
@@ -170,7 +140,7 @@ class GenerationCoordinator(BaseGenerationService):
 
             if not made_api_call:
                 self.event_bus.emit("file_content_updated", target_file, file_content)
-                await asyncio.sleep(0.1)  # Give UI time to create tab if needed
+                await asyncio.sleep(0.1)
                 self.event_bus.emit("stream_text_at_cursor", target_file, file_content)
             else:
                 if self.project_manager and self.project_manager.active_project_path:
@@ -210,7 +180,7 @@ class GenerationCoordinator(BaseGenerationService):
                 if full_streamed_content is None:
                     self.event_bus.emit("ai_workflow_finished")
                     return None
-                file_content = self._sanitize_code_output(full_streamed_content)
+                file_content = sanitize_llm_code_output(full_streamed_content)
 
             final_code[target_file] = file_content
             self.event_bus.emit("finalize_editor_content", target_file)

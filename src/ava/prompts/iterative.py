@@ -77,7 +77,7 @@ CODER_PROMPT = textwrap.dedent("""
     ---
     **CRITICAL & UNBREAKABLE LAWS OF CODING**
 
-    **LAW #1: STRICTLY ADHERE TO THE ASSIGNMENT (NEW LAW).**
+    **LAW #1: STRICTLY ADHERE TO THE ASSIGNMENT.**
     - You MUST implement all functions and classes listed in the "Public Members to Implement" section above.
     - The names of these functions/classes MUST EXACTLY match the names specified in the plan. DO NOT rename them.
 
@@ -89,6 +89,10 @@ CODER_PROMPT = textwrap.dedent("""
     - Your entire response MUST be only the raw code for the assigned file.
     - You MUST include all necessary imports, function definitions, classes, and logic.
     - All imports MUST be absolute from the project's source root.
+
+    **LAW #4: NO MARKDOWN FENCES.**
+    - Your response MUST NOT under any circumstances contain ``` or ''' code fences.
+    - The entire response must be only the raw code itself, starting directly with an import or a class/function definition.
 
     {RAW_CODE_OUTPUT_RULE}
 

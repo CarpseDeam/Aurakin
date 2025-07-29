@@ -4,10 +4,9 @@ from typing import TYPE_CHECKING, Optional, Any, Dict
 import re
 
 from src.ava.prompts import TESTER_PROMPT, FILE_TESTER_PROMPT
-# --- THIS IS THE FIX ---
 from src.ava.prompts.master_rules import S_TIER_ENGINEERING_PROTOCOL, RAW_CODE_OUTPUT_RULE
-# --- END OF FIX ---
 from src.ava.services.base_generation_service import BaseGenerationService
+from src.ava.utils import sanitize_llm_code_output
 
 if TYPE_CHECKING:
     from src.ava.core.event_bus import EventBus
@@ -21,16 +20,6 @@ class TestGenerationService(BaseGenerationService):
     def __init__(self, service_manager: Any, event_bus: EventBus):
         super().__init__(service_manager, event_bus)
         self.log("info", "TestGenerationService Initialized.")
-
-    def _sanitize_code_output(self, raw_code: str) -> str:
-        """Removes markdown fences and leading/trailing whitespace from LLM-generated code."""
-        if raw_code.startswith("```python"):
-            raw_code = raw_code[len("```python"):].strip()
-        elif raw_code.startswith("```"):
-            raw_code = raw_code[len("```"):].strip()
-        if raw_code.endswith("```"):
-            raw_code = raw_code[:-len("```")].strip()
-        return raw_code
 
     async def generate_test_for_function(self, function_name: str, function_code: str, source_file_path: str) -> \
     Optional[Dict[str, str]]:
@@ -57,11 +46,11 @@ class TestGenerationService(BaseGenerationService):
             return None
 
         parts = full_response.split("---requirements.txt---")
-        test_code = self._sanitize_code_output(parts[0])
+        test_code = sanitize_llm_code_output(parts)
 
         requirements_content = None
         if len(parts) > 1:
-            requirements_content = parts[1].strip()
+            requirements_content = parts.strip()
 
         self.log("success", f"Successfully generated test content for '{function_name}'.")
         return {"test_code": test_code, "requirements": requirements_content}
@@ -89,11 +78,11 @@ class TestGenerationService(BaseGenerationService):
             return None
 
         parts = full_response.split("---requirements.txt---")
-        test_code = self._sanitize_code_output(parts[0])
+        test_code = sanitize_llm_code_output(parts)
 
         requirements_content = None
         if len(parts) > 1:
-            requirements_content = parts[1].strip()
+            requirements_content = parts.strip()
 
         self.log("success", f"Successfully generated test file for '{source_file_path}'.")
         return {"test_code": test_code, "requirements": requirements_content}

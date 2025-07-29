@@ -38,25 +38,11 @@ TESTER_PROMPT = textwrap.dedent("""
     ---requirements.txt---
     pytest
 
+    **LAW #5: NO MARKDOWN FENCES.**
+    - Your response MUST NOT under any circumstances contain ``` or ''' code fences.
+    - The entire response must be only the raw code itself, starting directly with an import.
+
     {RAW_CODE_OUTPUT_RULE}
-
-    **EXAMPLE OUTPUT STRUCTURE:**
-    ```python
-    import pytest
-    from {module_path} import {function_name}
-
-    def test_{function_name}_happy_path():
-        # ... implementation for a valid input scenario ...
-        # assert {function_name}(...) == expected_output
-
-    def test_{function_name}_error_handling():
-        # ... implementation for an invalid input scenario ...
-        with pytest.raises(ValueError):
-            {function_name}(...)
-    ```
-    ---requirements.txt---
-    pytest
-    ```
 
     Execute your mission. Write the complete pytest file for the function `{function_name}` now.
     """)
@@ -97,6 +83,10 @@ FILE_TESTER_PROMPT = textwrap.dedent("""
     ---requirements.txt---
     pytest
     requests
+
+    **LAW #5: NO MARKDOWN FENCES.**
+    - Your response MUST NOT under any circumstances contain ``` or ''' code fences.
+    - The entire response must be only the raw code itself, starting directly with an import.
 
     {RAW_CODE_OUTPUT_RULE}
 

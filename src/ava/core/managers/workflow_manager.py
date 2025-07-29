@@ -12,6 +12,7 @@ from src.ava.core.event_bus import EventBus
 from src.ava.core.interaction_mode import InteractionMode
 from src.ava.prompts import TEST_HEALER_PROMPT, RUNTIME_HEALER_PROMPT, ANALYST_PROMPT
 from src.ava.prompts.master_rules import JSON_OUTPUT_RULE, S_TIER_ENGINEERING_PROTOCOL
+from src.ava.utils import sanitize_llm_code_output
 
 if TYPE_CHECKING:
     from src.ava.core.managers.service_manager import ServiceManager
@@ -53,16 +54,6 @@ class WorkflowManager:
     def _on_session_cleared(self):
         self._last_generated_code = None
         self._last_user_request = ""
-
-    def _sanitize_code_output(self, raw_code: str) -> str:
-        """Removes markdown fences and leading/trailing whitespace from LLM-generated code."""
-        if raw_code.startswith("```python"):
-            raw_code = raw_code[len("```python"):].strip()
-        elif raw_code.startswith("```"):
-            raw_code = raw_code[len("```"):].strip()
-        if raw_code.endswith("```"):
-            raw_code = raw_code[:-len("```")].strip()
-        return raw_code
 
     async def _run_chat_workflow(self, user_idea: str, conversation_history: list):
         """Runs the simple chat workflow for the 'PLAN' mode."""
@@ -401,7 +392,7 @@ class WorkflowManager:
             if filename not in final_code:
                 self.log("warning", f"Healer tried to modify non-existent file: {filename}. Skipping.")
                 continue
-            sanitized_content = self._sanitize_code_output(new_content)
+            sanitized_content = sanitize_llm_code_output(new_content)
             if project_manager.active_project_path:
                 abs_path_str = str(project_manager.active_project_path / filename)
                 self.event_bus.emit("agent_activity_started", "Healer", abs_path_str)
@@ -415,7 +406,7 @@ class WorkflowManager:
             await asyncio.sleep(0.5)
 
         if project_manager.git_manager:
-            sanitized_rewrites = {fname: self._sanitize_code_output(content) for fname, content in
+            sanitized_rewrites = {fname: sanitize_llm_code_output(content) for fname, content in
                                   rewritten_files.items()}
             project_manager.git_manager.write_and_stage_files(sanitized_rewrites)
             project_manager.git_manager.commit_staged_files("fix: AI Healer applied automated fix")
