@@ -20,7 +20,7 @@ except ImportError:
     openai = None
 try:
     import google.generativeai as genai
-    from google.generativeai.types import HarmCategory, HarmBlockThreshold, Content, Part
+    from google.generativeai.types import HarmCategory, HarmBlockThreshold
     from PIL import Image
     import io
 except ImportError:
@@ -153,7 +153,7 @@ async def _stream_openai_compatible(client, model, prompt, temp, image_b64, medi
         yield " "
 
 
-def _prepare_gemini_history(history: List[Dict[str, Any]]) -> List[Content]:
+def _prepare_gemini_history(history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Converts the generic history format to Gemini's Content object list."""
     gemini_history = []
     if not history:
@@ -162,15 +162,12 @@ def _prepare_gemini_history(history: List[Dict[str, Any]]) -> List[Content]:
     for msg in history:
         role = "user" if msg.get("role") == "user" else "model"
         text_content = msg.get("text") or msg.get("content", "")
-        # Gemini history API does not support images, only the current turn does.
         if text_content:
-            gemini_history.append(Content(role=role, parts=[Part(text=text_content)]))
+            gemini_history.append(genai.types.Content(role=role, parts=[genai.types.Part(text=text_content)]))
     return gemini_history
 
 
 async def _stream_google(client, model, prompt, temp, image_b64, media_type, history):
-    # The history from the client includes the latest user message.
-    # We pass all prior messages to start_chat, and send the newest one in send_message.
     gemini_history = _prepare_gemini_history(history[:-1] if history else [])
 
     model_instance = genai.GenerativeModel(f'models/{model}')

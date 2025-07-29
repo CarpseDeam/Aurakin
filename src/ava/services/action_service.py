@@ -52,7 +52,8 @@ class ActionService:
             self.log("info", "New project creation cancelled by user.")
             return
 
-        self.log("info", f"New project '{project_name}' requested. Aggressively clearing all session state.")
+        clean_project_name = project_name.strip()
+        self.log("info", f"New project '{clean_project_name}' requested. Aggressively clearing all session state.")
         self.event_bus.emit("session_cleared")
         self.event_bus.emit("chat_cleared", "New project started. Let's build something amazing!")
 
@@ -62,7 +63,7 @@ class ActionService:
         lsp_client = self.service_manager.get_lsp_client_service()
         if not all([project_manager, rag_manager, app_state_service]): return
 
-        project_path_str = project_manager.new_project(project_name.strip())
+        project_path_str = project_manager.new_project(clean_project_name)
         if not project_path_str:
             QMessageBox.critical(self.window_manager.get_main_window(), "Project Creation Failed",
                                  "Could not initialize project.")
@@ -72,6 +73,7 @@ class ActionService:
 
         await rag_manager.switch_project_context(project_path)
 
+        # THIS IS THE FIX: Pass the actual directory name from the project manager
         app_state_service.set_app_state(AppState.BOOTSTRAP, project_manager.active_project_name)
 
         self.event_bus.emit("project_root_selected", project_path_str)

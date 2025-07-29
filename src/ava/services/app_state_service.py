@@ -14,6 +14,7 @@ class AppStateService:
         self.event_bus = event_bus
         self._app_state: AppState = AppState.BOOTSTRAP
         self._interaction_mode: InteractionMode = InteractionMode.BUILD
+        self._project_name: str | None = None  # NEW: Track project name context
         print("[AppStateService] Initialized.")
 
     def get_app_state(self) -> AppState:
@@ -28,10 +29,12 @@ class AppStateService:
         """
         Sets the application state and emits an event to notify listeners.
         This is the ONLY place where the application state should be changed.
+        An event is emitted if either the state OR the project name context changes.
         """
-        if self._app_state != new_state:
+        if self._app_state != new_state or self._project_name != project_name:
             self._app_state = new_state
-            self.log("info", f"Application state changed to: {new_state.name}")
+            self._project_name = project_name
+            self.log("info", f"Application state changed to: {new_state.name}, Project: {project_name}")
             self.event_bus.emit("app_state_changed", new_state, project_name)
 
     def set_interaction_mode(self, new_mode: InteractionMode):

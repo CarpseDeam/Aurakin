@@ -26,14 +26,28 @@ class GenerationCoordinator(BaseGenerationService):
         self.validator = ResponseValidatorService()
 
     def _sanitize_code_output(self, raw_code: str) -> str:
-        """Removes markdown fences and leading/trailing whitespace from LLM-generated code."""
-        if raw_code.startswith("```python"):
-            raw_code = raw_code[len("```python"):].strip()
-        elif raw_code.startswith("```"):
-            raw_code = raw_code[len("```"):].strip()
-        if raw_code.endswith("```"):
-            raw_code = raw_code[:-len("```")].strip()
-        return raw_code
+        """Removes markdown fences (both ``` and ''') from LLM-generated code."""
+        cleaned_code = raw_code.strip()
+
+        # Handle triple-backtick fences
+        if cleaned_code.startswith("```python"):
+            cleaned_code = cleaned_code[len("```python"):].strip()
+        elif cleaned_code.startswith("```"):
+            cleaned_code = cleaned_code[len("```"):].strip()
+
+        # Handle triple-single-quote fences
+        if cleaned_code.startswith("'''python"):
+            cleaned_code = cleaned_code[len("'''python"):].strip()
+        elif cleaned_code.startswith("'''"):
+            cleaned_code = cleaned_code[len("'''"):].strip()
+
+        # Remove closing fence of either type
+        if cleaned_code.endswith("```"):
+            cleaned_code = cleaned_code[:-len("```")].strip()
+        if cleaned_code.endswith("'''"):
+            cleaned_code = cleaned_code[:-len("'''")].strip()
+
+        return cleaned_code
 
     async def coordinate_generation(
             self,
@@ -48,6 +62,11 @@ class GenerationCoordinator(BaseGenerationService):
         # --- PHASE 0: META-ARCHITECT - HIGH-LEVEL PLANNING ---
         self.log("info", "--- Starting Unified Hierarchical Workflow ---")
         self.event_bus.emit("agent_status_changed", "Architect", "Devising high-level strategy...", "fa5s.brain")
+
+        # --- FIX: Trigger Architect visualization immediately ---
+        if self.project_manager and self.project_manager.active_project_path:
+            self.event_bus.emit("agent_activity_started", "Architect", str(self.project_manager.active_project_path))
+            await asyncio.sleep(0.1)  # Allow the UI a moment to react and draw the node/connection
 
         context_files_json = json.dumps(existing_files, indent=2) if existing_files else "{}"
 
@@ -106,13 +125,9 @@ class GenerationCoordinator(BaseGenerationService):
         files_to_generate = {item.get('file'): "" for item in interface_contract if item.get('file')}
         self.log("success", f"File Planner designed {len(files_to_generate)} files.")
 
-        # --- FIX: Ensure visual nodes are created BEFORE triggering animations ---
+        # Now that planning is complete, create the visual file nodes from the plan.
         self.event_bus.emit("project_scaffold_generated", files_to_generate)
         await asyncio.sleep(0.5)  # Give the UI a moment to process the scaffold
-
-        if self.project_manager and self.project_manager.active_project_path:
-            self.event_bus.emit("agent_activity_started", "Architect", str(self.project_manager.active_project_path))
-            await asyncio.sleep(1.5)  # Pause to let the animation be seen
 
         # --- PHASE 2: CODER - FILE-BY-FILE IMPLEMENTATION ---
         final_code = existing_files.copy() if existing_files else {}
@@ -136,7 +151,11 @@ class GenerationCoordinator(BaseGenerationService):
                 file_content = pydantic_models
                 made_api_call = False
             elif target_file == 'requirements.txt':
-                reqs = set((existing_files.get(target_file, "")).splitlines())
+                # Safely handle the case where existing_files is None for new projects.
+                if existing_files:
+                    reqs = set(existing_files.get(target_file, "").splitlines())
+                else:
+                    reqs = set()
                 reqs.add("pytest")
                 if "pydantic" in pydantic_models.lower():
                     reqs.add("pydantic")
