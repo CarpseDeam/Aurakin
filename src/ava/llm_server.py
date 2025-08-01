@@ -50,6 +50,7 @@ class StreamChatRequest(BaseModel):
     image_b64: Optional[str] = None
     media_type: Optional[str] = None
     history: Optional[List[Dict[str, Any]]] = None
+    max_tokens: Optional[int] = None
 
 
 # --- Global State ---
@@ -136,10 +137,11 @@ def _prepare_openai_messages(history: List[Dict[str, Any]], prompt: str, image_b
     return messages
 
 
-async def _stream_openai_compatible(client, model, prompt, temp, image_b64, media_type, history, provider: str):
+async def _stream_openai_compatible(client, model, prompt, temp, image_b64, media_type, history, provider: str, max_tokens: Optional[int]):
     messages = _prepare_openai_messages(history, prompt, image_b64, media_type)
+    max_tokens_to_use = max_tokens or 8192
     stream = await client.chat.completions.create(
-        model=model, messages=messages, stream=True, temperature=temp, max_tokens=8192
+        model=model, messages=messages, stream=True, temperature=temp, max_tokens=max_tokens_to_use
     )
 
     content_sent = False
@@ -167,7 +169,7 @@ def _prepare_gemini_history(history: List[Dict[str, Any]]) -> List[Dict[str, Any
     return gemini_history
 
 
-async def _stream_google(client, model, prompt, temp, image_b64, media_type, history):
+async def _stream_google(client, model, prompt, temp, image_b64, media_type, history, max_tokens: Optional[int]):
     gemini_history = _prepare_gemini_history(history[:-1] if history else [])
 
     model_instance = genai.GenerativeModel(f'models/{model}')
@@ -184,13 +186,15 @@ async def _stream_google(client, model, prompt, temp, image_b64, media_type, his
         HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
     }
 
+    max_tokens_to_use = max_tokens or 8192
+
     try:
         response_stream = await chat_session.send_message_async(
             content_parts,
             stream=True,
             generation_config=genai.types.GenerationConfig(
                 temperature=temp,
-                max_output_tokens=8192
+                max_output_tokens=max_tokens_to_use
             ),
             safety_settings=safety_settings
         )
@@ -223,7 +227,7 @@ async def _stream_google(client, model, prompt, temp, image_b64, media_type, his
         yield " "
 
 
-async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, history):
+async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, history, max_tokens: Optional[int]):
     openai_messages = _prepare_openai_messages(history, prompt, image_b64, media_type)
     anthropic_messages = []
     for msg in openai_messages:
@@ -245,8 +249,9 @@ async def _stream_anthropic(client, model, prompt, temp, image_b64, media_type, 
         if anthropic_content:
             anthropic_messages.append({"role": msg['role'], "content": anthropic_content})
 
+    max_tokens_to_use = max_tokens or 8192
     content_sent = False
-    async with client.messages.stream(max_tokens=8192, model=model, messages=anthropic_messages,
+    async with client.messages.stream(max_tokens=max_tokens_to_use, model=model, messages=anthropic_messages,
                                       temperature=temp) as stream:
         async for event in stream:
             if event.type == "content_block_delta" and event.delta.type == "text_delta":
@@ -305,14 +310,19 @@ async def stream_chat_endpoint(request: StreamChatRequest):
 
     async def generator():
         try:
-            if request.provider in ["openai", "deepseek"]:
-                async for chunk in stream_func(client, request.model, request.prompt, request.temperature,
-                                               request.image_b64, request.media_type, request.history,
-                                               request.provider):
+            common_args = {
+                "client": client, "model": request.model, "prompt": request.prompt,
+                "temp": request.temperature, "image_b64": request.image_b64,
+                "media_type": request.media_type, "history": request.history
+            }
+            if request.provider == "ollama":
+                async for chunk in stream_func(**common_args):
+                    yield chunk
+            elif request.provider in ["openai", "deepseek"]:
+                async for chunk in stream_func(**common_args, provider=request.provider, max_tokens=request.max_tokens):
                     yield chunk
             else:
-                async for chunk in stream_func(client, request.model, request.prompt, request.temperature,
-                                               request.image_b64, request.media_type, request.history):
+                async for chunk in stream_func(**common_args, max_tokens=request.max_tokens):
                     yield chunk
         except Exception as e:
             print(f"Error streaming from {request.provider}: {e}", file=sys.stderr)

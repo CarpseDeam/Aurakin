@@ -77,14 +77,15 @@ class ScopeAwareVisitor(ast.NodeVisitor):
         names were never defined in any accessible scope.
         """
         undefined = set()
-        for name, node in self.used_names:
-            # Check if the name is a builtin
-            if name in self.builtins:
-                continue
+        # Get all names defined in any scope accessible from the current one.
+        all_defined_names = set()
+        for scope in self.scopes:
+            all_defined_names.update(scope)
+        all_defined_names.update(self.builtins)
 
-            # Check if the name exists in the current scope or any parent scope.
-            found = any(name in scope for scope in self.scopes)
-            if not found:
+        for name, node in self.used_names:
+            # Check if the name exists in the set of all defined names.
+            if name not in all_defined_names:
                 undefined.add(name)
         return undefined
 
@@ -145,16 +146,22 @@ class ImportFixerService:
         import_block = "\n".join(import_statements)
         lines = code.split('\n')
 
+        # Find the best position to insert imports (after docstring and existing imports)
         insert_pos = 0
-        if lines and lines[0].strip().startswith(('"""', "'''")):
-            insert_pos = 1
-            while insert_pos < len(lines) and lines[insert_pos].strip() == "":
-                insert_pos += 1
+        in_docstring = False
+        for i, line in enumerate(lines):
+            stripped_line = line.strip()
+            if '"""' in stripped_line or "'''" in stripped_line:
+                if stripped_line.count('"""') % 2 != 0 or stripped_line.count("'''") % 2 != 0:
+                    in_docstring = not in_docstring
 
-        for i, line in enumerate(lines[insert_pos:], start=insert_pos):
-            if line.strip().startswith(('import ', 'from ')):
+            if not in_docstring and not stripped_line.startswith(('from ', 'import ')):
+                insert_pos = i
+                break
+            if not in_docstring and stripped_line.startswith(('from ', 'import ')):
                 insert_pos = i + 1
 
+        # Add spacing around the new import block
         if insert_pos > 0 and lines[insert_pos - 1].strip() != "":
             import_block = "\n" + import_block
         if insert_pos < len(lines) and lines[insert_pos].strip() != "":

@@ -73,4 +73,12 @@ S_TIER_ENGINEERING_PROTOCOL = textwrap.dedent("""
         -   **Context Managers:** Always use the `with` statement for resources like files or network connections.
         -   **Data-Driven Logic:** For mapping choices to actions (like calculator operations), prefer a dictionary lookup over a long `if/elif/else` chain.
         -   **Clarity over Brevity:** Write code that is easy for a human to read and understand.
+
+    4.  **IDEMPOTENT & STATELESS LOGIC:**
+        -   Functions should be stateless where possible. Given the same inputs, they should produce the same outputs.
+        -   Classes should be initialized to a clean state. Avoid relying on module-level global variables.
+
+    5.  **NO PLACEHOLDERS OR TODOs:**
+        -   All generated code MUST be fully functional and complete.
+        -   Do not include comments like `# TODO: Implement this later` or use `pass` in a function body unless it is a deliberate abstract method.
 """)

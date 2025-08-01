@@ -9,6 +9,10 @@ from .healer import TEST_HEALER_PROMPT, RUNTIME_HEALER_PROMPT
 from .analyst import ANALYST_PROMPT
 # NEW: Prompt for high-level architectural planning
 from .meta_architect import META_ARCHITECT_PROMPT
+# NEW: Prompt for automated code review
+from .reviewer import REVIEWER_PROMPT
+# NEW: Prompt for specialist code correction
+from .corrector import CORRECTOR_PROMPT
 
 
 __all__ = [
@@ -20,4 +24,6 @@ __all__ = [
     'RUNTIME_HEALER_PROMPT',
     'ANALYST_PROMPT',
     'META_ARCHITECT_PROMPT',
+    'REVIEWER_PROMPT',
+    'CORRECTOR_PROMPT',
 ]

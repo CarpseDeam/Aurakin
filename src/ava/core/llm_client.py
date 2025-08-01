@@ -92,7 +92,8 @@ class LLMClient:
 
     async def stream_chat(self, provider: str, model: str, prompt: str, role: str = None,
                           image_bytes: Optional[bytes] = None, image_media_type: str = "image/png",
-                          history: Optional[List[Dict[str, Any]]] = None):
+                          history: Optional[List[Dict[str, Any]]] = None,
+                          max_tokens: Optional[int] = None):
         """Streams a chat response from the LLM server."""
         temperature = self.get_role_temperature(role) if role else 0.7
         image_b64 = base64.b64encode(image_bytes).decode('utf-8') if image_bytes else None
@@ -104,7 +105,8 @@ class LLMClient:
             "temperature": temperature,
             "image_b64": image_b64,
             "media_type": image_media_type,
-            "history": history or []
+            "history": history or [],
+            "max_tokens": max_tokens
         }
 
         try:

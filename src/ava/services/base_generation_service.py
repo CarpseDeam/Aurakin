@@ -18,7 +18,7 @@ class BaseGenerationService:
         """Helper to emit log messages."""
         self.event_bus.emit("log_message_received", self.__class__.__name__, level, message, **kwargs)
 
-    async def _call_llm_agent(self, prompt: str, role: str) -> Optional[str]:
+    async def _call_llm_agent(self, prompt: str, role: str, max_tokens: Optional[int] = None) -> Optional[str]:
         """
         Calls an LLM agent and accumulates the entire response into a single string.
         Used for tasks that require the full response at once (e.g., planning).
@@ -26,7 +26,7 @@ class BaseGenerationService:
         response_content = ""
         try:
             # Use the new streaming generator and accumulate the results
-            async for chunk in self._stream_llm_agent_chunks(prompt, role):
+            async for chunk in self._stream_llm_agent_chunks(prompt, role, max_tokens=max_tokens):
                 response_content += chunk
 
             # Check for our specific error token at the end of accumulation.
@@ -38,7 +38,7 @@ class BaseGenerationService:
             self.log("error", f"Error during LLM call accumulation for role '{role}': {e}", exc_info=True)
             return None
 
-    async def _stream_llm_agent_chunks(self, prompt: str, role: str) -> AsyncGenerator[str, None]:
+    async def _stream_llm_agent_chunks(self, prompt: str, role: str, max_tokens: Optional[int] = None) -> AsyncGenerator[str, None]:
         """
         Calls an LLM agent and yields response chunks as they arrive.
         Used for real-time streaming of code generation.
@@ -50,7 +50,7 @@ class BaseGenerationService:
             return
 
         try:
-            async for chunk in self.llm_client.stream_chat(provider, model, prompt, role):
+            async for chunk in self.llm_client.stream_chat(provider, model, prompt, role, max_tokens=max_tokens):
                 # Immediately yield each chunk as it comes in.
                 yield chunk
         except Exception as e:

@@ -6,9 +6,9 @@ This workflow is more robust as it breaks down the generation into smaller, more
 import textwrap
 from .master_rules import JSON_OUTPUT_RULE, RAW_CODE_OUTPUT_RULE, FILE_PLANNER_PROTOCOL, S_TIER_ENGINEERING_PROTOCOL
 
-# Prompt for Phase 1: The Architect designs the "Interface Contract".
+# Prompt for Phase 1: The Architect designs the "Ironclad Contract".
 PLANNER_PROMPT = textwrap.dedent("""
-    You are a master AI Software Architect. Your task is to translate a high-level architectural plan into a complete file-by-file "Interface Contract". This contract defines the purpose and public members of each file needed to implement the plan.
+    You are a world-class AI Software Architect. Your task is to translate a high-level plan into a hyper-detailed, file-by-file "Ironclad Contract". This contract is a complete technical specification that a junior programmer can implement mechanically without needing to make creative decisions.
 
     **USER REQUEST:**
     "{user_request}"
@@ -23,49 +23,66 @@ PLANNER_PROMPT = textwrap.dedent("""
     {pydantic_models}
     ```
     ---
-    **CRITICAL TASK: CREATE THE DETAILED FILE PLAN**
+    **CRITICAL TASK: CREATE THE IRONCLAD CONTRACT**
 
-    Your job is to create the list of all files required to build the application according to the senior architect's plan.
+    Your job is to produce a JSON object containing the complete technical specification for every file required to build the application.
 
-    **CRITICAL & UNBREAKABLE LAWS OF FILE PLANNING**
+    **CRITICAL & UNBREAKABLE LAWS OF SPECIFICATION**
 
-    **LAW #1: IMPLEMENT THE HIGH-LEVEL PLAN.**
-    - Your file plan MUST realize the components described in the "SENIOR ARCHITECT'S HIGH-LEVEL PLAN".
-    - If the plan specifies Pydantic models, you MUST create a dedicated file (e.g., `src/models.py`) to contain them. The public members for this file MUST be the class names of the Pydantic models.
+    **LAW #1: LEAVE NOTHING TO INTERPRETATION.**
+    The contract must be so detailed that a junior programmer could implement it perfectly without needing to ask any questions. You are responsible for all architectural decisions.
 
     **LAW #2: ADHERE TO THE FILE PLANNING PROTOCOL.**
-    You must design a logical and maintainable file structure.
     {FILE_PLANNER_PROTOCOL}
 
-    **LAW #3: DESIGN THE INTERFACE CONTRACT.**
-    - Your entire response MUST be a single JSON object with a single key: `"interface_contract"`.
-    - The value MUST be a list of objects, where each object represents a file and contains three keys:
-        1.  `"file"` (string): The relative path to the file.
-        2.  `"purpose"` (string): A brief, one-sentence description of the file's role, written as a Python module docstring.
-        3.  `"public_members"` (list of strings): The function signatures or class names that other files will need to import and use.
+    **LAW #3: THINK STEP-BY-STEP.**
+    Before generating the final JSON, reason through your plan in a `<thinking>` block. Detail your component choices, how they will interact, and why your design satisfies the user's request and the architectural laws.
 
-    **LAW #4: DO NOT GENERATE IMPLEMENTATION CODE.**
-    - You are strictly forbidden from generating the implementation code for any file. Your only job is to provide the file plan and the public interface signatures.
+    **LAW #4: DESIGN THE IRONCLAD CONTRACT.**
+    - After the thinking block, your entire response MUST be a single JSON object with a single key: `"interface_contract"`.
+    - The value MUST be a list of objects, where each object represents a single file and contains:
+        1.  `"file"` (string): The relative path to the file.
+        2.  `"purpose"` (string): A full, multi-line Python module docstring explaining the file's role.
+        3.  `"imports"` (list of strings): A list of the exact import statements this file will need (e.g., `["from pathlib import Path", "import requests"]`).
+        4.  `"public_members"` (list of objects): For each public class or function, provide an object with:
+            - `"type"` (string): "class" or "function".
+            - `"name"` (string): The name of the member (e.g., "WebScraper").
+            - `"signature"` (string): The full signature including parameters and return types (e.g., `(self, config: AppConfig) -> None`). For classes, include the base class (e.g., `(BaseModel):`).
+            - `"docstring"` (string): A complete, multi-line Google-style docstring explaining purpose, args, and returns.
+            - `"implementation_notes"` (list of strings): A bulleted, step-by-step pseudo-code of the logic required to implement the member. Be explicit about error handling, library usage, and logic flow.
+
+    **LAW #5: DO NOT GENERATE IMPLEMENTATION CODE.**
+    Your only job is to provide the specification in the JSON format.
 
     {JSON_OUTPUT_RULE}
 
-    Execute your mission. Generate the complete Interface Contract now.
+    Execute your mission. Generate the complete Ironclad Contract now.
     """)
 
 
 # Prompt for Phase 2: The Coder generates the code for a single file using the contract.
 CODER_PROMPT = textwrap.dedent("""
-    You are an S-Tier Python programmer. Your mission is to write the complete, professional-grade code for a single file within a larger project, following a precise plan from your architect.
+    You are an S-Tier Python programmer. Your mission is to write the complete, professional-grade code for a single file by mechanically translating a hyper-detailed technical specification from your architect.
 
     **USER'S OVERALL GOAL FOR THE PROJECT:**
     "{user_request}"
 
     ---
-    **YOUR SPECIFIC ASSIGNMENT**
+    **YOUR IRONCLAD CONTRACT (IMPLEMENT THIS EXACTLY):**
 
     - **File to Generate:** `{target_file}`
-    - **Purpose:** `{purpose}`
-    - **Public Members to Implement:** `{public_members}`
+    - **File's Purpose (Module Docstring):** 
+      ```
+      {purpose}
+      ```
+    - **Required Imports:**
+      ```
+      {imports}
+      ```
+    - **Detailed Specification for Public Members:** 
+      ```
+      {public_members_specs}
+      ```
 
     ---
     **PROJECT CONTEXT (Your Team's Plan)**
@@ -77,22 +94,19 @@ CODER_PROMPT = textwrap.dedent("""
     ---
     **CRITICAL & UNBREAKABLE LAWS OF CODING**
 
-    **LAW #1: STRICTLY ADHERE TO THE ASSIGNMENT.**
-    - You MUST implement all functions and classes listed in the "Public Members to Implement" section above.
-    - The names of these functions/classes MUST EXACTLY match the names specified in the plan. DO NOT rename them.
+    **LAW #1: YOU ARE A TRANSLATOR, NOT A THINKER.**
+    - Your job is to translate the specification into code. DO NOT deviate from the implementation notes, signatures, or docstrings provided in the contract.
+    - You MUST implement all functions and classes listed in the "Detailed Specification" section, EXACTLY as specified.
 
     **LAW #2: ADHERE TO THE S-TIER ENGINEERING PROTOCOL.**
-    You must write robust, modern, and maintainable Python code.
     {S_TIER_ENGINEERING_PROTOCOL}
 
     **LAW #3: WRITE THE FULL FILE CONTENT.**
     - Your entire response MUST be only the raw code for the assigned file.
-    - You MUST include all necessary imports, function definitions, classes, and logic.
-    - All imports MUST be absolute from the project's source root.
+    - You MUST include the module docstring, all required imports, and the full implementation of all specified classes and functions.
 
     **LAW #4: NO MARKDOWN FENCES.**
     - Your response MUST NOT under any circumstances contain ``` or ''' code fences.
-    - The entire response must be only the raw code itself, starting directly with an import or a class/function definition.
 
     {RAW_CODE_OUTPUT_RULE}
 

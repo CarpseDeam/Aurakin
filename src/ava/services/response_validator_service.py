@@ -3,6 +3,7 @@ import json
 import re
 from typing import Dict, Any, Optional, Union, List
 
+
 class ResponseValidatorService:
     """
     A dedicated service to parse, clean, and validate responses from LLMs.
@@ -19,29 +20,35 @@ class ResponseValidatorService:
             return None
 
         # Step 1: Find the content that is most likely to be the JSON payload.
+        # Prefer content within markdown fences if they exist.
         fence_match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw_response, re.DOTALL)
-        content_to_parse = fence_match.group(1) if fence_match else raw_response
+        if fence_match:
+            content_to_parse = fence_match.group(1)
+        else:
+            content_to_parse = raw_response
 
-        # Step 2: Find the start of the first JSON object or array.
+        # Step 2: Find the start of the first JSON object or array within the content.
+        # This strips any leading text or markdown titles.
         first_brace = content_to_parse.find('{')
         first_bracket = content_to_parse.find('[')
 
-        if first_brace == -1 and first_bracket == -1: return None
+        if first_brace == -1 and first_bracket == -1:
+            return None  # No JSON found
 
         if first_brace != -1 and (first_bracket == -1 or first_brace < first_bracket):
             start_pos = first_brace
         else:
             start_pos = first_bracket
 
+        # We now have the definitive start of the JSON.
+        json_body_to_scan = content_to_parse[start_pos:]
+
         # Step 3: Parse character-by-character to find the end of the first complete object.
-        # This is resilient to truncated streams by correctly balancing nested structures.
         delimiter_stack = []
         in_string = False
         is_escaped = False
 
-        for i in range(start_pos, len(content_to_parse)):
-            char = content_to_parse[i]
-
+        for i, char in enumerate(json_body_to_scan):
             if is_escaped:
                 is_escaped = False
                 continue
@@ -60,18 +67,16 @@ class ResponseValidatorService:
                 delimiter_stack.append(char)
             elif char == '}':
                 if not delimiter_stack or delimiter_stack[-1] != '{':
-                    # Malformed JSON, but we can't recover.
-                    return None
+                    return None  # Malformed JSON
                 delimiter_stack.pop()
             elif char == ']':
                 if not delimiter_stack or delimiter_stack[-1] != '[':
-                    # Malformed JSON.
-                    return None
+                    return None  # Malformed JSON
                 delimiter_stack.pop()
 
             if not delimiter_stack:
                 # We have found the end of the top-level object.
-                json_string = content_to_parse[start_pos : i + 1]
+                json_string = json_body_to_scan[:i + 1]
                 try:
                     return json.loads(json_string)
                 except json.JSONDecodeError:
@@ -109,13 +114,13 @@ class ResponseValidatorService:
         # Check if there are any paths with directory separators
         paths_in_dirs = [p for p in paths if '/' in p.replace('\\', '/')]
         if not paths_in_dirs:
-            return scaffold # No directories, nothing to clean
+            return scaffold  # No directories, nothing to clean
 
         # Get the first part of the first path with a directory
         path_parts = [p.replace('\\', '/').split('/') for p in paths_in_dirs]
         first_part = path_parts[0][0]
         if not first_part:
-            return scaffold # Path starts with a slash, not a directory name
+            return scaffold  # Path starts with a slash, not a directory name
 
         # Check if ALL paths with directories start with the same first part
         if all(p[0] == first_part for p in path_parts):
@@ -143,7 +148,7 @@ class ResponseValidatorService:
             # Heuristic: check if keys look like file paths and values are strings
             is_plausible = all(isinstance(k, str) and isinstance(v, str) for k, v in data.items())
             if is_plausible:
-                 # Additional heuristic to avoid matching simple metadata dicts
+                # Additional heuristic to avoid matching simple metadata dicts
                 if any(ext in path for path in data.keys() for ext in ['.py', '.txt', '.md', '.json', '.gitignore']):
                     return data
 

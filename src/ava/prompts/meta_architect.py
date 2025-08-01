@@ -9,21 +9,21 @@ META_ARCHITECT_PROMPT = textwrap.dedent("""
     "{user_request}"
 
     ---
-    **EXISTING PROJECT CONTEXT (For Modifications):**
-    This JSON object contains the full source code of the existing project. If it's empty, you are creating a new project from scratch.
-    ```json
-    {existing_files_json}
+    **EXISTING PROJECT STRUCTURE & SUMMARY (For Modifications):**
+    This provides the file paths and a high-level summary of classes and functions in the existing project. Use this to understand the current architecture before planning changes. If this section says "# This is a new project.", you are creating a new project from scratch.
+    ```
+    {project_summary}
     ```
     ---
     **CRITICAL TASK: DEVISE A HIGH-LEVEL STRATEGY**
 
-    1.  **Analyze Context:** If existing files are provided, analyze them to understand the current architecture before planning your changes. If not, plan a new architecture from scratch.
+    1.  **Analyze Context:** If an existing project summary is provided, analyze it to infer the current architecture before planning your changes.
     2.  **Identify Core Components & Data Structures:** Define the necessary classes and Pydantic models. For modifications, this might mean adding new ones or planning changes to existing ones.
     3.  **Plan for Configuration & Dependencies:** Follow dependency injection and strict configuration management.
-    4.  **Describe the Plan:** Write a concise, step-by-step summary of your architectural plan. This plan MUST address the user's request.
-    5.  **Output JSON:** Your entire response MUST be a single JSON object with two keys:
+    4.  **Think Step-by-Step:** Before generating the final JSON, reason through your plan in a `<thinking>` block. Detail your component choices, how they will interact, and why your design satisfies the user's request and the architectural laws.
+    5.  **Output JSON:** After the thinking block, your entire response MUST be a single JSON object with two keys:
         -   `"high_level_plan"`: A string containing your plain-English architectural summary.
-        -   `"pydantic_models"`: A string containing the raw Python code for all required Pydantic models. For modifications, include both new and existing models if they are relevant.
+        -   `"pydantic_models"`: A string containing the raw Python code for all required Pydantic models. For modifications, include both new and existing models if they are relevant. If no Pydantic models are needed, this should be an empty string.
 
     ---
     **CRITICAL & UNBREAKABLE LAWS OF SENIOR ARCHITECTURE**
